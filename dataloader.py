@@ -42,30 +42,38 @@ class MSR_VTT_VideoDataset(Dataset):
             else:
                 self.video2caption[cap["video_id"]].append(cap["caption"])
         logger.info("successfully loading {} captions".format(len(captions)))
-        self.video_ids = list(self.video2caption.keys())
-
-        # init BERT
-        self.bert_tokenizer = bert_tokenizer
 
         # load video paths
         self.video_paths = [i for i in plb.Path(video_dir).glob("*.mp4")]
+        self.video_ids = [i.stem for i in self.video_paths]
+        self.frames_num = frames_num
+        self.frames_size = frames_size
 
         # load video frames into memory and resize
-        self.video2frames = {}
-        for video_path in tqdm(self.video_paths, desc="loading videos"):
-            video = mmcv.VideoReader(str(video_path))
-            frame_cnt = video.frame_cnt
-            samples_ix = np.linspace(0, frame_cnt - 1, frames_num).astype(int)
-            frames = map(lambda x: video.get_frame(x), samples_ix)
-            resized_frames = torch.stack(list(map(lambda x: torch.tensor(mmcv.imresize(x, (frames_size, frames_size))), frames)))
-            self.video2frames[video_path.stem] = resized_frames
-        logger.info("successfully loading {} videos".format(len(self.video2frames)))
+        # self.video2frames = {}
+        # for video_path in tqdm(self.video_paths, desc="loading videos"):
+        #     video = mmcv.VideoReader(str(video_path))
+        #     frame_cnt = video.frame_cnt
+        #     samples_ix = np.linspace(0, frame_cnt - 1, frames_num).astype(int)
+        #     frames = map(lambda x: video.get_frame(x), samples_ix)
+        #     resized_frames = torch.stack(list(map(lambda x: torch.tensor(mmcv.imresize(x, (frames_size, frames_size))), frames)))
+        #     self.video2frames[video_path.stem] = resized_frames
+        # logger.info("successfully loading {} videos".format(len(self.video2frames)))
 
     def __getitem__(self, index):
-        video_id = self.video_ids[index]
-        frames = self.video2frames[video_id]  # Tensor(T, H, W, C)
-        caption = random.choice(self.video2caption[video_id])
+        caption = random.choice(self.video2caption[self.video_ids[index]])
+        video_path = self.video_paths[index]
+        frames = self.load_single_video(video_path)  # Tensor(T H W C)
         return frames, caption
+
+    def load_single_video(self, video_path):
+        video = mmcv.VideoReader(str(video_path))
+        frame_cnt = video.frame_cnt
+        samples_ix = np.linspace(0, frame_cnt - 1, self.frames_num).astype(int)
+        frames = map(lambda x: video.get_frame(x), samples_ix)
+        resized_frames = torch.stack(
+            list(map(lambda x: torch.tensor(mmcv.imresize(x, (self.frames_size, self.frames_size))), frames)))
+        return resized_frames
 
 
 def msrvtt_collate_fn(data):
