@@ -22,7 +22,7 @@ def make_tokenizer(bert_type='bert-base-cased'):
 
 
 class MSR_VTT_VideoDataset(Dataset):
-    def __init__(self, video_dir, annotation_file, bert_tokenizer,
+    def __init__(self, video_dir, annotation_file,
                  frames_num=80, frames_size=224, ):
         """ Video Dataset
             Args:
@@ -30,14 +30,12 @@ class MSR_VTT_VideoDataset(Dataset):
                 annotation_file (str): the path of annotation_file
                 frames_num (int): the num of frames to be extracted from each video
                 frames_size (int): the size of frame
-                bert_tokenizer (obj AutoTokenizer): the type of BERT model. Could be "bert-base-uncased", "bert-base-cased" an so on.
-                    Full list https://huggingface.co/models?sort=downloads&search=bert
             """
         # load captions
         self.video2caption = {}
         with open(annotation_file, encoding='utf-8') as f:
             annotation = json.load(f)
-        captions = annotation["senteces"]
+        captions = annotation["sentences"]
         for cap in tqdm(captions, desc="Loading annotations"):
             if cap["video_id"] not in self.video2caption:
                 self.video2caption[cap["video_id"]] = [cap["caption"]]
@@ -54,12 +52,12 @@ class MSR_VTT_VideoDataset(Dataset):
 
         # load video frames into memory and resize
         self.video2frames = {}
-        for video_path in tqdm(self.video_paths):
-            video = mmcv.VideoReader(video_path)
-            frame_cnt = video_path.frame_cnt
+        for video_path in tqdm(self.video_paths, desc="loading videos"):
+            video = mmcv.VideoReader(str(video_path))
+            frame_cnt = video.frame_cnt
             samples_ix = np.linspace(0, frame_cnt - 1, frames_num).astype(int)
             frames = map(lambda x: video.get_frame(x), samples_ix)
-            resized_frames = torch.stack(list(map(lambda x: mmcv.imresize(x, (frames_size, frames_size)), frames)))
+            resized_frames = torch.stack(list(map(lambda x: torch.tensor(mmcv.imresize(x, (frames_size, frames_size))), frames)))
             self.video2frames[video_path.stem] = resized_frames
         logger.info("successfully loading {} videos".format(len(self.video2frames)))
 
@@ -83,5 +81,6 @@ def msrvtt_collate_fn(data):
 
 
 if __name__ == "__main__":
-    dataset = MSR_VTT_VideoDataset()
+    dataset = MSR_VTT_VideoDataset(r"/data3/lzh/MSRVTT/MSRVTT_trainval",
+                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",)
     train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=4)
