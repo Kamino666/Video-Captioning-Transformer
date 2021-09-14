@@ -14,7 +14,7 @@ from operator import mul
 from einops import rearrange
 
 import logging
-# from mmcv.utils import get_logger
+from utils import get_logger
 from mmcv.runner import load_checkpoint
 
 
@@ -33,8 +33,7 @@ def get_root_logger(log_file=None, log_level=logging.INFO):
     Returns:
         :obj:`logging.Logger`: The root logger.
     """
-    return logging.getLogger()
-    # return get_logger(__name__.split('.')[0], log_file, log_level)
+    return get_logger(__name__.split('.')[0], log_file, log_level)
 
 
 class Mlp(nn.Module):
@@ -688,3 +687,64 @@ class SwinTransformer3D(nn.Module):
         """Convert the model into training mode while keep layers freezed."""
         super(SwinTransformer3D, self).train(mode)
         self._freeze_stages()
+
+
+class VideoCaptionSwinTransformer(nn.Module):
+    """ Video Captinoing Swin Transformer.
+            add Transformer Decoder
+        Args:
+            patch_size (int | tuple(int)): Patch size. Default: (4,4,4).
+            in_chans (int): Number of input image channels. Default: 3.
+            embed_dim (int): Number of linear projection output channels. Default: 96.
+            depths (tuple[int]): Depths of each Swin Transformer stage.
+            num_heads (tuple[int]): Number of attention head of each stage.
+            window_size (int): Window size. Default: 7.
+            mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4.
+            qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: Truee
+            qk_scale (float): Override default qk scale of head_dim ** -0.5 if set.
+            drop_rate (float): Dropout rate.
+            attn_drop_rate (float): Attention dropout rate. Default: 0.
+            drop_path_rate (float): Stochastic depth rate. Default: 0.2.
+            norm_layer: Normalization layer. Default: nn.LayerNorm.
+            patch_norm (bool): If True, add normalization after patch embedding. Default: False.
+            frozen_stages (int): Stages to be frozen (stop grad and set eval mode).
+                -1 means not freezing any parameters.
+        """
+
+    def __init__(self,
+                 pretrained=None,
+                 pretrained2d=True,
+                 patch_size=(4, 4, 4),
+                 in_chans=3,
+                 embed_dim=96,
+                 depths=[2, 2, 6, 2],
+                 num_heads=[3, 6, 12, 24],
+                 window_size=(2, 7, 7),
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop_rate=0.,
+                 attn_drop_rate=0.,
+                 drop_path_rate=0.2,
+                 norm_layer=nn.LayerNorm,
+                 patch_norm=False,
+                 frozen_stages=-1,
+                 use_checkpoint=False,
+                 encoder_dim=768,
+                 decoder_head=8,
+                 decoder_layers=4):
+        super().__init__()
+        self.backbone = SwinTransformer3D(pretrained=pretrained, pretrained2d=pretrained2d,
+                                          patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
+                                          depths=depths, num_heads=num_heads, window_size=window_size,
+                                          mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                          drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
+                                          drop_path_rate=drop_path_rate, norm_layer=norm_layer,
+                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
+                                          use_checkpoint=use_checkpoint)
+        # self.encoder_dim = encoder_dim
+        decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers)
+
+    def forward(self, x):
+        pass
