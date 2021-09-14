@@ -49,6 +49,9 @@ class MSR_VTT_VideoDataset(Dataset):
         self.frames_num = frames_num
         self.frames_size = frames_size
 
+        # video buffer
+        self.video_buffer = {}
+
         # load video frames into memory and resize
         # self.video2frames = {}
         # for video_path in tqdm(self.video_paths, desc="loading videos"):
@@ -63,17 +66,11 @@ class MSR_VTT_VideoDataset(Dataset):
     def __getitem__(self, index):
         caption = random.choice(self.video2caption[self.video_ids[index]])
         video_path = self.video_paths[index]
-        frames = self.load_single_video(video_path)  # Tensor(T H W C)
+        frames = load_single_video(video_path, self.frames_num, self.frames_size, tensor=True)  # Tensor(T H W C)
         return frames, caption
 
-    def load_single_video(self, video_path):
-        video = mmcv.VideoReader(str(video_path))
-        frame_cnt = video.frame_cnt
-        samples_ix = np.linspace(0, frame_cnt - 1, self.frames_num).astype(int)
-        frames = map(lambda x: video.get_frame(x), samples_ix)
-        resized_frames = torch.stack(
-            list(map(lambda x: torch.tensor(mmcv.imresize(x, (self.frames_size, self.frames_size))), frames)))
-        return resized_frames
+    def __len__(self):
+        return len(self.video_ids)
 
 
 def msrvtt_collate_fn(data):
@@ -88,7 +85,47 @@ def msrvtt_collate_fn(data):
     return video_data, tokenized_caption
 
 
+def load_single_video(video_path, frames_num, frames_size, tensor=False):
+    video = mmcv.VideoReader(str(video_path))
+    frame_cnt = video.frame_cnt
+    samples_ix = np.linspace(0, frame_cnt - 1, frames_num).astype(int)
+    frames = map(lambda x: video.get_frame(x), samples_ix)
+    resized_frames = torch.stack(
+        list(map(lambda x: torch.tensor(mmcv.imresize(x, (frames_size, frames_size))), frames)))
+    if tensor is True:
+        return resized_frames
+    else:
+        return resized_frames.numpy()
+
+
+def make_video_buffer(video_paths, save_path, frames_num, frames_size, compress=True):
+    """
+    preprocess video and save buffer as numpy array
+    :param compress: whether or not to do compress
+    :param video_paths: list of video paths
+    :param save_path: the path to save buffer
+    :param frames_num: fix number of frames to extract
+    :param frames_size: frames size of the video
+    :return:
+    """
+    # video_ids = [i.stem for i in video_paths]
+    all_video_arr_dict = {}  # dict(N, T, H, W, C)
+    for path in tqdm(list(video_paths), desc="making buffer"):
+        video_arr = load_single_video(path, frames_num, frames_size, tensor=False)
+        all_video_arr_dict[path.stem] = video_arr
+    if compress is True:
+        np.savez_compressed(save_path, **all_video_arr_dict)
+    else:
+        np.savez(save_path, **all_video_arr_dict)
+
+
 if __name__ == "__main__":
-    dataset = MSR_VTT_VideoDataset(r"/data3/lzh/MSRVTT/MSRVTT_trainval",
-                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",)
-    train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=4)
+    # dataset = MSR_VTT_VideoDataset(r"/data3/lzh/MSRVTT/MSRVTT_trainval",
+    #                                r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
+    # train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=4)
+    trainval = plb.Path(r"/data3/lzh/MSRVTT/MSRVTT_trainval")
+    make_video_buffer(trainval.rglob("*.mp4"),
+                      save_path=r"./data/buffer.npz",
+                      frames_num=40,
+                      frames_size=224,
+                      compress=True)
