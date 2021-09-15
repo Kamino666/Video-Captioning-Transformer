@@ -11,6 +11,7 @@ import pathlib as plb
 from tqdm import tqdm
 import logging
 import random
+import os
 
 logger = logging.getLogger("main")
 bert_tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
@@ -23,50 +24,54 @@ def make_tokenizer(bert_type='bert-base-cased'):
 
 class MSR_VTT_VideoDataset(Dataset):
     def __init__(self, video_dir, annotation_file,
-                 frames_num=80, frames_size=224, ):
+                 frames_num=80, frames_size=224,
+                 mode="train", buffer_save_path=r"./data/buffer.npz",
+                 random_seed=10503):
         """ Video Dataset
             Args:
-                video_dir (str): the path of videos
+                video_dir (str): buffer file or raw videos dir
                 annotation_file (str): the path of annotation_file
                 frames_num (int): the num of frames to be extracted from each video
                 frames_size (int): the size of frame
+                mode (str): captions will not be loaded if mode is test
             """
-        # load captions
-        self.video2caption = {}
-        with open(annotation_file, encoding='utf-8') as f:
-            annotation = json.load(f)
-        captions = annotation["sentences"]
-        for cap in tqdm(captions, desc="Loading annotations"):
-            if cap["video_id"] not in self.video2caption:
-                self.video2caption[cap["video_id"]] = [cap["caption"]]
-            else:
-                self.video2caption[cap["video_id"]].append(cap["caption"])
-        logger.info("successfully loading {} captions".format(len(captions)))
-
-        # load video paths
+        random.seed(random_seed)
+        self.seed = random_seed
         self.video_paths = [i for i in plb.Path(video_dir).glob("*.mp4")]
         self.video_ids = [i.stem for i in self.video_paths]
         self.frames_num = frames_num
         self.frames_size = frames_size
 
-        # video buffer
-        self.video_buffer = {}
+        # load video
+        if os.path.isdir(video_dir):
+            make_video_buffer(plb.Path(video_dir).rglob("*.mp4"),
+                              save_path=buffer_save_path,
+                              frames_num=frames_num,
+                              frames_size=frames_size,
+                              compress=True)
+            self.video2data = np.load(buffer_save_path)
+        elif os.path.isfile(video_dir):
+            self.video2data = np.load(video_dir)
+        logger.info("successfully loading {} videos".format(len(self.video2data)))
 
-        # load video frames into memory and resize
-        # self.video2frames = {}
-        # for video_path in tqdm(self.video_paths, desc="loading videos"):
-        #     video = mmcv.VideoReader(str(video_path))
-        #     frame_cnt = video.frame_cnt
-        #     samples_ix = np.linspace(0, frame_cnt - 1, frames_num).astype(int)
-        #     frames = map(lambda x: video.get_frame(x), samples_ix)
-        #     resized_frames = torch.stack(list(map(lambda x: torch.tensor(mmcv.imresize(x, (frames_size, frames_size))), frames)))
-        #     self.video2frames[video_path.stem] = resized_frames
-        # logger.info("successfully loading {} videos".format(len(self.video2frames)))
+        # load captions
+        self.video2caption = {}
+        if mode == "train" or "val":
+            with open(annotation_file, encoding='utf-8') as f:
+                annotation = json.load(f)
+            captions = annotation["sentences"]
+            for cap in tqdm(captions, desc="Loading annotations"):
+                if cap["video_id"] not in self.video2caption:
+                    self.video2caption[cap["video_id"]] = [cap["caption"]]
+                else:
+                    self.video2caption[cap["video_id"]].append(cap["caption"])
+            logger.info("successfully loading {} captions".format(len(captions)))
 
     def __getitem__(self, index):
         caption = random.choice(self.video2caption[self.video_ids[index]])
-        video_path = self.video_paths[index]
-        frames = load_single_video(video_path, self.frames_num, self.frames_size, tensor=True)  # Tensor(T H W C)
+        # video_path = self.video_paths[index]
+        # frames = load_single_video(video_path, self.frames_num, self.frames_size, tensor=True)  # Tensor(T H W C)
+        frames = self.video2data[self.video_ids[index]]
         return frames, caption
 
     def __len__(self):
