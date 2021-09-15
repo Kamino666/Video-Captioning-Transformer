@@ -37,8 +37,8 @@ class MSR_VTT_VideoDataset(Dataset):
             """
         random.seed(random_seed)
         self.seed = random_seed
-        self.video_paths = [i for i in plb.Path(video_dir).glob("*.mp4")]
-        self.video_ids = [i.stem for i in self.video_paths]
+        # self.video_paths = [i for i in plb.Path(video_dir).glob("*.mp4")]
+        # self.video_ids = [i.stem for i in self.video_paths]
         self.frames_num = frames_num
         self.frames_size = frames_size
 
@@ -52,6 +52,7 @@ class MSR_VTT_VideoDataset(Dataset):
             self.video2data = np.load(buffer_save_path)
         elif os.path.isfile(video_dir):
             self.video2data = np.load(video_dir)
+        self.video_ids = list(self.video2data.keys())
         logger.info("successfully loading {} videos".format(len(self.video2data)))
 
         # load captions
@@ -71,7 +72,7 @@ class MSR_VTT_VideoDataset(Dataset):
         caption = random.choice(self.video2caption[self.video_ids[index]])
         # video_path = self.video_paths[index]
         # frames = load_single_video(video_path, self.frames_num, self.frames_size, tensor=True)  # Tensor(T H W C)
-        frames = self.video2data[self.video_ids[index]]
+        frames = torch.tensor(self.video2data[self.video_ids[index]])
         return frames, caption
 
     def __len__(self):
@@ -125,12 +126,13 @@ def make_video_buffer(video_paths, save_path, frames_num, frames_size, compress=
 
 
 if __name__ == "__main__":
-    # dataset = MSR_VTT_VideoDataset(r"/data3/lzh/MSRVTT/MSRVTT_trainval",
-    #                                r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
-    # train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=4)
-    trainval = plb.Path(r"/data3/lzh/MSRVTT/MSRVTT_trainval")
-    make_video_buffer(trainval.rglob("*.mp4"),
-                      save_path=r"./data/buffer.npz",
-                      frames_num=40,
-                      frames_size=224,
-                      compress=True)
+    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
+                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
+    train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=4)
+    a = next(iter(train_loader))  # B,T,H,W,C
+    # trainval = plb.Path(r"/data3/lzh/MSRVTT/MSRVTT_trainval")
+    # make_video_buffer(trainval.rglob("*.mp4"),
+    #                   save_path=r"./data/buffer.npz",
+    #                   frames_num=40,
+    #                   frames_size=224,
+    #                   compress=True)
