@@ -702,6 +702,7 @@ def generate_square_subsequent_mask(sz):
     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
     return mask
 
+
 def create_mask(src, tgt, PAD_IDX):
     src_seq_len = src.shape[0]
     tgt_seq_len = tgt.shape[0]
@@ -741,7 +742,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                  qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=8, decoder_layers=4,
-                 bert_embedding=True, bert_config=None, bert_type="bert-base-cased", vocab_size=30522,
+                 bert_embedding=True, bert_type="bert-base-cased", vocab_size=30522,
                  out_drop=0.3, max_out_len=30, checkpoint_pth=None):
         super().__init__()
         # save info
@@ -758,8 +759,6 @@ class VideoCaptionSwinTransformer(nn.Module):
                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
                                          use_checkpoint=use_checkpoint)
         load_checkpoint(self.encoder, checkpoint_pth, map_location='cpu', revise_keys=[(r'^backbone\.', '')])
-        # self.encoder.init_weights(checkpoint_pth)
-        # self.encoder_dim = encoder_dim
         decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers)
         """
@@ -811,17 +810,19 @@ class VideoCaptionSwinTransformer(nn.Module):
             # enc_caption: torch.Size([N, max_len, 768])
             enc_caption = self.embedding(**tokenized_cap).last_hidden_state
             enc_caption = rearrange(enc_caption, 'n t c -> t n c')
-            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(enc_video, enc_caption,
-                                                                                 PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
-            # cap_mask = generate_square_subsequent_mask(cap_len)
-            # cap_padding_mask = tokenized_cap["attention_mask"].transpose(0, 1)
-            mylogger.debug("enc_caption: {}".format(str(enc_caption.shape)))  # torch.Size([2, 25, 768])
-            # mylogger.debug("cap_padding_mask: {}".format(str(cap_padding_mask.shape)))
+            _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
+                                                           enc_caption,
+                                                           PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
+            mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # torch.Size([2, 25, 768])
+            mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))
+            mylogger.debug("tgt_key_padding_mask: {}".format(tgt_padding_mask.shape))
+
             # dec_caption: (T, N, E)
             dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
                                        tgt_mask=tgt_mask,
-                                       tgt_key_padding_mask=tgt_padding_mask)  # Tensor(N,T,E)
+                                       tgt_key_padding_mask=tgt_padding_mask)
             mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))
+
             # result: (T, N, 1)
             prob = self.out_linear(self.out_drop(dec_caption))  # Tensor(N,T,vocab_size)
             return prob
@@ -853,6 +854,7 @@ class VideoCaptionSwinTransformer(nn.Module):
 
 if __name__ == '__main__':
     import os
+
     os.environ["CUDA_VISIBLE_DEVICES"] = "6"
     from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
     from torch.utils.data import DataLoader
@@ -861,7 +863,6 @@ if __name__ == '__main__':
                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
     train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=2)
     a = next(iter(train_loader))  # B,T,H,W,C
-    # a0 = rearrange(a[0], 'n c d h w -> n d h w c')
     vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1, patch_norm=True,
                                              window_size=(8, 7, 7), depths=(2, 2, 6, 2), embed_dim=96,
                                              checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
