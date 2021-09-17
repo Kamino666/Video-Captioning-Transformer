@@ -85,7 +85,7 @@ def msrvtt_collate_fn(data):
     :return: Tensor(N, T, H, W, C), {"input_ids", "token_type_ids", "attention_mask"}
     """
     global bert_tokenizer
-    video_data = torch.stack([i[0] for i in data]).cuda()
+    video_data = torch.stack([i[0] for i in data])#.cuda()
     text_data = [i[1] for i in data]
     tokenized_caption = bert_tokenizer(text_data)
     return video_data, tokenized_caption
@@ -136,3 +136,6 @@ if __name__ == "__main__":
     #                   frames_num=40,
     #                   frames_size=224,
     #                   compress=True)
+
+# /data3/lzh/VATEX
+

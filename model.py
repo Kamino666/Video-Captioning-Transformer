@@ -467,6 +467,7 @@ class PatchEmbed3D(nn.Module):
         if D % self.patch_size[0] != 0:
             x = F.pad(x, (0, 0, 0, 0, 0, self.patch_size[0] - D % self.patch_size[0]))
 
+        # print(x.shape)
         x = self.proj(x)  # B C D Wh Ww
         if self.norm is not None:
             D, Wh, Ww = x.size(2), x.size(3), x.size(4)
@@ -726,8 +727,8 @@ class VideoCaptionSwinTransformer(nn.Module):
                  qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=8, decoder_layers=4,
-                 bert_embedding=True, bert_config=None, bert_type="bert-base-cased", vocab_size=None,
-                 out_drop=0.3, max_out_len=30, checkpoint_pth="./checkpoints/swin_base_patch244_window1677_sthv2.pth"):
+                 bert_embedding=True, bert_config=None, bert_type="bert-base-cased", vocab_size=30522,
+                 out_drop=0.3, max_out_len=30, checkpoint_pth=None):
         super().__init__()
         # save info
         self.vocab_size = vocab_size
@@ -742,7 +743,8 @@ class VideoCaptionSwinTransformer(nn.Module):
                                          drop_path_rate=drop_path_rate, norm_layer=norm_layer,
                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
                                          use_checkpoint=use_checkpoint)
-        load_checkpoint(self.encoder, checkpoint_pth, map_location='cpu')
+        load_checkpoint(self.encoder, checkpoint_pth, map_location='cpu', revise_keys=[(r'^backbone\.', '')])
+        # self.encoder.init_weights(checkpoint_pth)
         # self.encoder_dim = encoder_dim
         decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers)
@@ -779,7 +781,7 @@ class VideoCaptionSwinTransformer(nn.Module):
         """
         assert mode == "train" and tokenized_cap is not None
         batch_size = video.shape[0]
-        cap_len = tokenized_cap['input_ids'].shape[1]
+        cap_len = len(tokenized_cap['input_ids'])
 
         # Encode the video
         # [N,T,H,W,C] -> [batch_size, channel, temporal_dim, height, width]
@@ -829,7 +831,17 @@ class VideoCaptionSwinTransformer(nn.Module):
 
 
 if __name__ == '__main__':
-    vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1,
-                                             window_size=(8, 7, 7), depths=(2, 2, 6, 2),
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+    from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
+    from torch.utils.data import DataLoader
+    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
+                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
+    train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=2)
+    a = next(iter(train_loader))  # B,T,H,W,C
+    # a0 = rearrange(a[0], 'n c d h w -> n d h w c')
+    vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1, patch_norm=True,
+                                             window_size=(8, 7, 7), depths=(2, 2, 6, 2), embed_dim=96,
                                              checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
-                                             bert_type="bert-base-uncased")
+                                             bert_type="bert-base-uncased", pretrained2d=False)#.cuda()
+    y = vcst_model(a[0].float(), a[1])
