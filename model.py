@@ -40,6 +40,9 @@ def get_root_logger(log_file=None, log_level=logging.INFO):
     return get_logger(__name__.split('.')[0], log_file, log_level)
 
 
+mylogger = get_root_logger(log_level=logging.DEBUG)
+
+
 class Mlp(nn.Module):
     """ Multilayer perceptron."""
 
@@ -695,9 +698,20 @@ class SwinTransformer3D(nn.Module):
 
 
 def generate_square_subsequent_mask(sz):
-    mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
+    mask = (torch.triu(torch.ones((sz, sz))) == 1).transpose(0, 1)
     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
     return mask
+
+def create_mask(src, tgt, PAD_IDX):
+    src_seq_len = src.shape[0]
+    tgt_seq_len = tgt.shape[0]
+
+    tgt_mask = generate_square_subsequent_mask(tgt_seq_len)
+    src_mask = torch.zeros((src_seq_len, src_seq_len)).type(torch.bool)
+
+    src_padding_mask = (src == PAD_IDX).transpose(0, 1)
+    tgt_padding_mask = (tgt == PAD_IDX).transpose(0, 1)
+    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
 
 
 class VideoCaptionSwinTransformer(nn.Module):
@@ -787,20 +801,27 @@ class VideoCaptionSwinTransformer(nn.Module):
         # [N,T,H,W,C] -> [batch_size, channel, temporal_dim, height, width]
         video = rearrange(video, 'n t h w c -> n c t h w')
         enc_video = self.encoder(video)
-        enc_video = rearrange(enc_video, 'n c t h w -> n t h w c')
+        enc_video = rearrange(enc_video, 'n c t h w -> t n h w c')
         # enc_video :torch.Size([N, 1024, T/2, H/32, W/32])
+        mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # torch.Size([2, 20, 7, 7, 768])
 
         # Decode
         if mode == "train":
             # embedding the caption
             # enc_caption: torch.Size([N, max_len, 768])
-            enc_caption = self.embedding(**tokenized_cap, padding=True).last_hidden_state
-            cap_mask = generate_square_subsequent_mask(cap_len)
-            cap_padding_mask = tokenized_cap["attention_mask"]
+            enc_caption = self.embedding(**tokenized_cap).last_hidden_state
+            enc_caption = rearrange(enc_caption, 'n t c -> t n c')
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(enc_video, enc_caption,
+                                                                                 PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
+            # cap_mask = generate_square_subsequent_mask(cap_len)
+            # cap_padding_mask = tokenized_cap["attention_mask"].transpose(0, 1)
+            mylogger.debug("enc_caption: {}".format(str(enc_caption.shape)))  # torch.Size([2, 25, 768])
+            # mylogger.debug("cap_padding_mask: {}".format(str(cap_padding_mask.shape)))
             # dec_caption: (T, N, E)
             dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
-                                       tgt_mask=cap_mask,
-                                       tgt_key_padding_mask=cap_padding_mask)  # Tensor(N,T,E)
+                                       tgt_mask=tgt_mask,
+                                       tgt_key_padding_mask=tgt_padding_mask)  # Tensor(N,T,E)
+            mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))
             # result: (T, N, 1)
             prob = self.out_linear(self.out_drop(dec_caption))  # Tensor(N,T,vocab_size)
             return prob
@@ -835,6 +856,7 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = "6"
     from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
     from torch.utils.data import DataLoader
+
     dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
     train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=2)
@@ -843,5 +865,5 @@ if __name__ == '__main__':
     vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1, patch_norm=True,
                                              window_size=(8, 7, 7), depths=(2, 2, 6, 2), embed_dim=96,
                                              checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
-                                             bert_type="bert-base-uncased", pretrained2d=False)#.cuda()
+                                             bert_type="bert-base-uncased", pretrained2d=False)  # .cuda()
     y = vcst_model(a[0].float(), a[1])

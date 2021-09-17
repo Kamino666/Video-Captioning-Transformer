@@ -87,7 +87,9 @@ def msrvtt_collate_fn(data):
     global bert_tokenizer
     video_data = torch.stack([i[0] for i in data])#.cuda()
     text_data = [i[1] for i in data]
-    tokenized_caption = bert_tokenizer(text_data)
+    tokenized_caption = bert_tokenizer(text_data, padding=True)
+    for k, v in tokenized_caption.items():
+        tokenized_caption[k] = torch.tensor(v)#.cuda()
     return video_data, tokenized_caption
 
 
