@@ -16,6 +16,10 @@ from einops import rearrange
 import logging
 from utils import get_logger
 from mmcv.runner import load_checkpoint
+from transformers import BertModel, AutoTokenizer
+import transformers as tf
+
+DEVICE = torch.device('cuda')
 
 
 def get_root_logger(log_file=None, log_level=logging.INFO):
@@ -689,6 +693,12 @@ class SwinTransformer3D(nn.Module):
         self._freeze_stages()
 
 
+def generate_square_subsequent_mask(sz):
+    mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    return mask
+
+
 class VideoCaptionSwinTransformer(nn.Module):
     """ Video Captinoing Swin Transformer.
             add Transformer Decoder
@@ -698,7 +708,7 @@ class VideoCaptionSwinTransformer(nn.Module):
             embed_dim (int): Number of linear projection output channels. Default: 96.
             depths (tuple[int]): Depths of each Swin Transformer stage.
             num_heads (tuple[int]): Number of attention head of each stage.
-            window_size (int): Window size. Default: 7.
+            window_size (tuple[int]): Window size. Default: 7.
             mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4.
             qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: Truee
             qk_scale (float): Override default qk scale of head_dim ** -0.5 if set.
@@ -711,40 +721,115 @@ class VideoCaptionSwinTransformer(nn.Module):
                 -1 means not freezing any parameters.
         """
 
-    def __init__(self,
-                 pretrained=None,
-                 pretrained2d=True,
-                 patch_size=(4, 4, 4),
-                 in_chans=3,
-                 embed_dim=96,
-                 depths=[2, 2, 6, 2],
-                 num_heads=[3, 6, 12, 24],
-                 window_size=(2, 7, 7),
-                 mlp_ratio=4.,
-                 qkv_bias=True,
-                 qk_scale=None,
-                 drop_rate=0.,
-                 attn_drop_rate=0.,
-                 drop_path_rate=0.2,
-                 norm_layer=nn.LayerNorm,
-                 patch_norm=False,
-                 frozen_stages=-1,
-                 use_checkpoint=False,
-                 encoder_dim=768,
-                 decoder_head=8,
-                 decoder_layers=4):
+    def __init__(self, pretrained=None, pretrained2d=True, patch_size=(2, 4, 4), in_chans=3, embed_dim=128,
+                 depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], window_size=(8, 7, 7), mlp_ratio=4.,
+                 qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
+                 use_checkpoint=False, encoder_dim=768, decoder_head=8, decoder_layers=4,
+                 bert_embedding=True, bert_config=None, bert_type="bert-base-cased", vocab_size=None,
+                 out_drop=0.3, max_out_len=30, checkpoint_pth="./checkpoints/swin_base_patch244_window1677_sthv2.pth"):
         super().__init__()
-        self.backbone = SwinTransformer3D(pretrained=pretrained, pretrained2d=pretrained2d,
-                                          patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
-                                          depths=depths, num_heads=num_heads, window_size=window_size,
-                                          mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                          drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
-                                          drop_path_rate=drop_path_rate, norm_layer=norm_layer,
-                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
-                                          use_checkpoint=use_checkpoint)
+        # save info
+        self.vocab_size = vocab_size
+        self.max_out_len = max_out_len
+
+        # encoder
+        self.encoder = SwinTransformer3D(pretrained=pretrained, pretrained2d=pretrained2d,
+                                         patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
+                                         depths=depths, num_heads=num_heads, window_size=window_size,
+                                         mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                         drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
+                                         drop_path_rate=drop_path_rate, norm_layer=norm_layer,
+                                         patch_norm=patch_norm, frozen_stages=frozen_stages,
+                                         use_checkpoint=use_checkpoint)
+        load_checkpoint(self.encoder, checkpoint_pth, map_location='cpu')
         # self.encoder_dim = encoder_dim
         decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers)
+        """
+        src – the sequence to the encoder (required). (N, S, E)
+        tgt – the sequence to the decoder (required). (N, T, E)
+        src_mask – 全0就行(S, S)
+        tgt_mask – 用那个函数生成就行，是一个上三角的矩阵(T, T)
+        src_key_padding_mask – [PAD]的地方填True，其他是False(N, S)
+        tgt_key_padding_mask – [PAD]的地方填True，其他是False(N, T)
+        """
 
-    def forward(self, x):
-        pass
+        # BERT
+        # forward(input_ids=None, attention_mask=None)
+        self.bert_embedding = bert_embedding
+        if bert_embedding is True:
+            self.embedding = BertModel.from_pretrained("bert-base-uncased")
+        else:
+            self.embedding = nn.Embedding(vocab_size, 768)
+        self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
+
+        # out MLP
+        self.out_drop = nn.Dropout(p=out_drop)
+        self.out_linear = nn.Linear(encoder_dim, vocab_size)
+
+    def forward(self, video, tokenized_cap=None,
+                mode="train"):
+        """
+        Input the VideoTensor(N,T,H,W,C) and VideoMask(N,T,H,W,C)
+        :param mode: "train" or "test"/"val"
+        :param tokenized_cap: dict{input_ids, attention_mask}, the input id of caption
+        :param video: Tensor(N,T,H,W,C) of frames
+        :return:
+        """
+        assert mode == "train" and tokenized_cap is not None
+        batch_size = video.shape[0]
+        cap_len = tokenized_cap['input_ids'].shape[1]
+
+        # Encode the video
+        # [N,T,H,W,C] -> [batch_size, channel, temporal_dim, height, width]
+        video = rearrange(video, 'n t h w c -> n c t h w')
+        enc_video = self.encoder(video)
+        enc_video = rearrange(enc_video, 'n c t h w -> n t h w c')
+        # enc_video :torch.Size([N, 1024, T/2, H/32, W/32])
+
+        # Decode
+        if mode == "train":
+            # embedding the caption
+            # enc_caption: torch.Size([N, max_len, 768])
+            enc_caption = self.embedding(**tokenized_cap, padding=True).last_hidden_state
+            cap_mask = generate_square_subsequent_mask(cap_len)
+            cap_padding_mask = tokenized_cap["attention_mask"]
+            # dec_caption: (T, N, E)
+            dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
+                                       tgt_mask=cap_mask,
+                                       tgt_key_padding_mask=cap_padding_mask)  # Tensor(N,T,E)
+            # result: (T, N, 1)
+            prob = self.out_linear(self.out_drop(dec_caption))  # Tensor(N,T,vocab_size)
+            return prob
+        else:
+            pad_id = self.tokenizer.convert_tokens_to_ids('[PAD]')
+            cls_id = self.tokenizer.convert_tokens_to_ids('[CLS]')
+            current_word = torch.ones([batch_size, 1]) * cls_id  # [B, 1]
+
+            words = []
+            cls_count = 0
+            for i in range(self.max_out_len - 1):
+                # generate mask
+                cap_padding_mask = (current_word == pad_id)
+                # embedding current word
+                embed_current_word = self.embedding(current_word).last_hidden_state
+                # dec_caption: (1, N, E)
+                dec_caption = self.decoder(tgt=embed_current_word, memory=enc_video,
+                                           tgt_key_padding_mask=cap_padding_mask)
+                prob = self.out_linear(self.out_drop(dec_caption))  # prob(N,1,vocab_size)
+                _, current_word = torch.max(prob, dim=1)  # current_word[N,1]
+                words.append(current_word)
+                # break if all captions reach [CLS]
+                cls_count += torch.sum((current_word == cls_id).to(dtype=torch.int))
+                if cls_count >= batch_size:
+                    break
+            words = torch.stack(words)
+            return words
+
+
+if __name__ == '__main__':
+    vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1,
+                                             window_size=(8, 7, 7), depths=(2, 2, 6, 2),
+                                             checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
+                                             bert_type="bert-base-uncased")
