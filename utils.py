@@ -98,7 +98,7 @@ class MaskCriterion(nn.Module):
         mask: shape of (N, seq_len)
         """
         item_sum = logits.shape[0]*logits.shape[1]  # N * seq_len
-        target, mask = target[:, 1:], mask[:, 1:]
+        # target, mask = target[:, 1:], mask[:, 1:]
         # loss [N*seq_len]
         loss = self.loss_fn(logits.contiguous().view(item_sum, -1),
                             target.contiguous().view(-1))

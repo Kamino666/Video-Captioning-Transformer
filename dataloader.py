@@ -15,7 +15,7 @@ import os
 
 logger = logging.getLogger("main")
 bert_tokenizer = None
-device = torch.device("cuda")
+device = torch.device("cpu")
 
 
 class MSR_VTT_VideoDataset(Dataset):
@@ -62,7 +62,7 @@ class MSR_VTT_VideoDataset(Dataset):
         # read video split info
         with open(annotation_file, encoding='utf-8') as f:
             annotation = json.load(f)
-        self.video2split = {i["video_id"]: i["split"] for i in annotation["video"]}
+        self.video2split = {i["video_id"]: i["split"] for i in annotation["videos"]}
         logger.info("successfully loading {} videos".format(len(self.video2data)))
 
         # load captions
@@ -81,7 +81,7 @@ class MSR_VTT_VideoDataset(Dataset):
     def __getitem__(self, index):
         video_id = self.video_ids[index]
         caption = random.choice(self.video2caption[video_id])
-        frames = torch.tensor(self.video2data[video_id])
+        frames = torch.tensor(self.video2data[video_id], dtype=torch.float)
         return frames, caption
 
     def __len__(self):
@@ -137,7 +137,7 @@ def make_video_buffer(video_paths, save_path, frames_num, frames_size, compress=
 
 
 if __name__ == "__main__":
-    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
+    dataset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
     train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=4)
     a = next(iter(train_loader))  # B,T,H,W,C

@@ -19,8 +19,6 @@ from mmcv.runner import load_checkpoint
 from transformers import BertModel, AutoTokenizer
 import transformers as tf
 
-DEVICE = torch.device('cuda')
-
 
 def get_root_logger(log_file=None, log_level=logging.INFO):
     """Use ``get_logger`` method in mmcv to get the root logger.
@@ -678,6 +676,7 @@ class SwinTransformer3D(nn.Module):
 
     def forward(self, x):
         """Forward function."""
+        # print(x.device, x.dtype, x.shape)
         x = self.patch_embed(x)
 
         x = self.pos_drop(x)
@@ -743,7 +742,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=8, decoder_layers=4,
                  bert_embedding=True, bert_type="bert-base-cased", vocab_size=30522,
-                 out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cuda")):
+                 out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cpu")):
         super().__init__()
         # save info
         self.vocab_size = vocab_size
@@ -793,6 +792,8 @@ class VideoCaptionSwinTransformer(nn.Module):
         batch_size = video.shape[0]
 
         # Encode the video
+        mylogger.debug("video: {}".format(str(video.shape)))
+        mylogger.debug("video: {}".format(str(video.device)))
         video = rearrange(video, 'n t h w c -> n c t h w')
         enc_video = self.encoder(video)
         # mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # enc_video: torch.Size([2, 768, 20, 7, 7])
@@ -821,6 +822,7 @@ class VideoCaptionSwinTransformer(nn.Module):
 
             # result: (T, N, 1)
             prob = self.out_linear(self.out_drop(dec_caption))  # prob torch.Size([25, 2, 30522])
+            mylogger.debug("prob: {}".format(str(prob.shape)))
             return prob
         else:
             pad_id = self.tokenizer.convert_tokens_to_ids('[PAD]')
@@ -863,7 +865,7 @@ if __name__ == '__main__':
     from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
     from torch.utils.data import DataLoader
 
-    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
+    dataset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
     train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=2)
     a = next(iter(train_loader))  # B,T,H,W,C
@@ -871,4 +873,5 @@ if __name__ == '__main__':
                                              window_size=(8, 7, 7), depths=(2, 2, 6, 2), embed_dim=96,
                                              checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
                                              bert_type="bert-base-uncased", pretrained2d=False)  # .cuda()
-    y = vcst_model(a[0].float(), mode='test')
+    # y = vcst_model(a[0].float(), mode='test')
+    y = vcst_model(a[0].float(), a[1], mode='train')

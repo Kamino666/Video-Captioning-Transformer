@@ -12,8 +12,9 @@ from model import VideoCaptionSwinTransformer
 from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
 from utils import MaskCriterion, EarlyStopping
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 writer = LogWriter(logdir="./log")
+device = torch.device('cpu')
 
 
 class Opt:
@@ -36,6 +37,7 @@ class Opt:
     checkpoint_pth = r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth"
     bert_type = "bert-base-uncased"
     pretrained2d = False
+    frozen_stages = 4
 
     """save config"""
     training_token = "video_swin_patch{}_window{}_embed{}_depth{}_".format(
@@ -47,19 +49,22 @@ class Opt:
 
 def train():
     opt = Opt()
-    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
-                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
-    train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
-    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
-                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
-                                   mode="val")
-    val_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
+    trainset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
+                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
+                                    gpu=False if device is torch.device("cpu") else True)
+    train_loader = DataLoader(trainset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
+    valset = MSR_VTT_VideoDataset(r"./data/msrvtt-validate-buffer.npz",
+                                  r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
+                                  gpu=False if device is torch.device("cpu") else True,
+                                  mode="val")
+    val_loader = DataLoader(valset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
 
     vcst_model = VideoCaptionSwinTransformer(patch_size=opt.patch_size, drop_path_rate=opt.drop_path_rate,
                                              patch_norm=opt.patch_norm, window_size=opt.window_size,
                                              depths=opt.depths, embed_dim=opt.embed_dim,
                                              checkpoint_pth=opt.checkpoint_pth,
-                                             bert_type=opt.bert_type, pretrained2d=False)
+                                             bert_type=opt.bert_type, pretrained2d=False,
+                                             frozen_stages=opt.frozen_stages, device=device)
 
     optimizer = optim.Adam(
         vcst_model.parameters(),
@@ -71,7 +76,8 @@ def train():
     )
     early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
                                    verbose=True,
-                                   path=os.path.join(opt.save_path, opt.training_token, opt.start_time + 'earlystop.pth'))
+                                   path=os.path.join(opt.save_path, opt.training_token,
+                                                     opt.start_time + 'earlystop.pth'))
     criterion = MaskCriterion()
 
     ###
@@ -90,7 +96,10 @@ def train():
 
             # probs [B, L, vocab_size]
             probs = vcst_model(frames, tokenized_cap=tokenized_cap, mode='train')
+            # prob torch.Size([25, 2, 30522])
+            probs = probs.transpose(1, 0)
 
+            print(probs.shape, tokenized_cap["input_ids"].shape, tokenized_cap["attention_mask"].shape)
             loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
 
             loss.backward()
@@ -112,6 +121,7 @@ def train():
 
             with torch.no_grad():
                 probs = vcst_model(frames, tokenized_cap=tokenized_cap, mode='val')
+                probs = probs.transpose(1, 0)
                 loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
 
             valid_running_loss += loss.item()
@@ -137,3 +147,7 @@ def train():
                                                 opt.start_time + str(epoch) + '.pth'))
     # save model
     torch.save(vcst_model, os.path.join(opt.save_path, opt.training_token, opt.start_time + 'final.pth'))
+
+
+if __name__ == "__main__":
+    train()
