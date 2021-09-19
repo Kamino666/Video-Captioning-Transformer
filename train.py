@@ -16,21 +16,15 @@ from utils import MaskCriterion, EarlyStopping
 
 # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 writer = LogWriter(logdir="./log")
-# device = torch.device('cpu')
-
-# 新增：从外面得到local_rank参数
-import argparse
-parser = argparse.ArgumentParser()
-parser.add_argument("--local_rank", default=-1)
-FLAGS = parser.parse_args()
-local_rank = FLAGS.local_rank
+device = torch.device('cuda')
+# local_rank = int(os.environ['LOCAL_RANK'])
 
 # 新增：DDP backend初始化
-torch.cuda.set_device(local_rank)
-dist.init_process_group(backend='nccl')  # nccl是GPU设备上最快、最推荐的后端
+# torch.cuda.set_device(local_rank)
+# dist.init_process_group(backend='nccl')  # nccl是GPU设备上最快、最推荐的后端
 
 # 构造模型
-device = torch.device("cuda", local_rank)
+# device = torch.device("cuda", local_rank)
 
 
 class Opt:
@@ -68,14 +62,14 @@ def train():
     trainset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
                                     r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
                                     gpu=False if device is torch.device("cpu") else True)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
-    train_loader = DataLoader(trainset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size, sampler=train_sampler)
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
+    train_loader = DataLoader(trainset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
     valset = MSR_VTT_VideoDataset(r"./data/msrvtt-validate-buffer.npz",
                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
                                   gpu=False if device is torch.device("cpu") else True,
                                   mode="val")
-    val_sampler = torch.utils.data.distributed.DistributedSampler(valset)
-    val_loader = DataLoader(valset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size, sampler=val_sampler)
+    # val_sampler = torch.utils.data.distributed.DistributedSampler(valset)
+    val_loader = DataLoader(valset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
 
     vcst_model = VideoCaptionSwinTransformer(patch_size=opt.patch_size, drop_path_rate=opt.drop_path_rate,
                                              patch_norm=opt.patch_norm, window_size=opt.window_size,
@@ -83,7 +77,7 @@ def train():
                                              checkpoint_pth=opt.checkpoint_pth,
                                              bert_type=opt.bert_type, pretrained2d=False,
                                              frozen_stages=opt.frozen_stages, device=device)
-    vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank)
+    # vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank)
 
     optimizer = optim.Adam(
         vcst_model.parameters(),
@@ -103,8 +97,8 @@ def train():
     ### start training
     ###
     for epoch in range(opt.MAX_EPOCHS):
-        train_loader.sampler.set_epoch(epoch)
-        val_loader.sampler.set_epoch(epoch)
+        # train_loader.sampler.set_epoch(epoch)
+        # val_loader.sampler.set_epoch(epoch)
         # ****************************
         #            train
         # ****************************

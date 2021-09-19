@@ -15,7 +15,7 @@ import os
 
 logger = logging.getLogger("main")
 bert_tokenizer = None
-device = torch.device("cpu")
+device = torch.device("cuda")
 
 
 class MSR_VTT_VideoDataset(Dataset):

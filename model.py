@@ -759,7 +759,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
                                          use_checkpoint=use_checkpoint).to(device)
         load_checkpoint(self.encoder, checkpoint_pth, map_location=str(device), revise_keys=[(r'^backbone\.', '')])
-        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(device)
+        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(torch.device("cpu"))
 
         # decoder
         decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
@@ -769,7 +769,7 @@ class VideoCaptionSwinTransformer(nn.Module):
         # forward(input_ids=None, attention_mask=None)
         self.bert_embedding = bert_embedding
         if bert_embedding is True:
-            self.embedding = BertModel.from_pretrained("bert-base-uncased").cpu()
+            self.embedding = BertModel.from_pretrained("bert-base-uncased").to(torch.device("cpu"))
             self.embedding.eval()
         else:
             self.embedding = nn.Embedding(vocab_size, 768)
