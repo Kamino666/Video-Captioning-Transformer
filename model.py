@@ -743,11 +743,12 @@ class VideoCaptionSwinTransformer(nn.Module):
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=8, decoder_layers=4,
                  bert_embedding=True, bert_type="bert-base-cased", vocab_size=30522,
-                 out_drop=0.3, max_out_len=30, checkpoint_pth=None):
+                 out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cuda")):
         super().__init__()
         # save info
         self.vocab_size = vocab_size
         self.max_out_len = max_out_len
+        self.device = device
 
         # encoder
         self.encoder = SwinTransformer3D(pretrained=pretrained, pretrained2d=pretrained2d,
@@ -757,35 +758,27 @@ class VideoCaptionSwinTransformer(nn.Module):
                                          drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
                                          drop_path_rate=drop_path_rate, norm_layer=norm_layer,
                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
-                                         use_checkpoint=use_checkpoint)
-        load_checkpoint(self.encoder, checkpoint_pth, map_location='cpu', revise_keys=[(r'^backbone\.', '')])
-        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1))
+                                         use_checkpoint=use_checkpoint).to(device)
+        load_checkpoint(self.encoder, checkpoint_pth, map_location=str(device), revise_keys=[(r'^backbone\.', '')])
+        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(device)
 
         # decoder
         decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers)
-        """
-        src – the sequence to the encoder (required). (N, S, E)
-        tgt – the sequence to the decoder (required). (N, T, E)
-        src_mask – 全0就行(S, S)
-        tgt_mask – 用那个函数生成就行，是一个上三角的矩阵(T, T)
-        src_key_padding_mask – [PAD]的地方填True，其他是False(N, S)
-        tgt_key_padding_mask – [PAD]的地方填True，其他是False(N, T)
-        """
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers).to(device)
 
         # BERT
         # forward(input_ids=None, attention_mask=None)
         self.bert_embedding = bert_embedding
         if bert_embedding is True:
-            self.embedding = BertModel.from_pretrained("bert-base-uncased")
+            self.embedding = BertModel.from_pretrained("bert-base-uncased").cpu()
             self.embedding.eval()
         else:
             self.embedding = nn.Embedding(vocab_size, 768)
         self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
 
         # out MLP
-        self.out_drop = nn.Dropout(p=out_drop)
-        self.out_linear = nn.Linear(encoder_dim, vocab_size)
+        self.out_drop = nn.Dropout(p=out_drop).to(device)
+        self.out_linear = nn.Linear(encoder_dim, vocab_size).to(device)
 
     def forward(self, video, tokenized_cap=None,
                 mode="train"):
@@ -811,7 +804,7 @@ class VideoCaptionSwinTransformer(nn.Module):
         if mode == "train":
             # embedding the caption
             # enc_caption: torch.Size([N, max_len, 768])
-            enc_caption = self.embedding(**tokenized_cap).last_hidden_state
+            enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
             enc_caption = rearrange(enc_caption, 'n t c -> t n c')
             _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
                                                            tokenized_cap['input_ids'],
@@ -844,7 +837,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                 # embedding current word
                 current_word = current_word.to(torch.int)
                 mylogger.debug("current_word: {}".format(str(current_word.shape)))
-                embed_current_word = self.embedding(input_ids=current_word).last_hidden_state
+                embed_current_word = self.embedding(input_ids=current_word).last_hidden_state.to(self.device)
                 mylogger.debug("embed_current_word: {}".format(str(embed_current_word.shape)))  # embed_current_word: torch.Size([2, 1, 768])
 
                 # dec_caption: (1, N, E)

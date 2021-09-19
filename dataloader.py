@@ -14,19 +14,16 @@ import random
 import os
 
 logger = logging.getLogger("main")
-bert_tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
-
-
-def make_tokenizer(bert_type='bert-base-cased'):
-    global bert_tokenizer
-    bert_tokenizer = AutoTokenizer.from_pretrained(bert_type)
+bert_tokenizer = None
+device = torch.device("cuda")
 
 
 class MSR_VTT_VideoDataset(Dataset):
     def __init__(self, video_dir, annotation_file,
                  frames_num=80, frames_size=224,
                  mode="train", buffer_save_path=r"./data/buffer.npz",
-                 random_seed=10503):
+                 random_seed=10503, bert_type='bert-base-uncased',
+                 gpu=True):
         """ Video Dataset
             Args:
                 video_dir (str): buffer file or raw videos dir
@@ -37,10 +34,19 @@ class MSR_VTT_VideoDataset(Dataset):
             """
         random.seed(random_seed)
         self.seed = random_seed
-        # self.video_paths = [i for i in plb.Path(video_dir).glob("*.mp4")]
-        # self.video_ids = [i.stem for i in self.video_paths]
         self.frames_num = frames_num
         self.frames_size = frames_size
+        self.bert_type = bert_type
+
+        # choice device
+        global device
+        if gpu is True:
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+
+        global bert_tokenizer
+        bert_tokenizer = AutoTokenizer.from_pretrained(bert_type)
 
         # load video
         if os.path.isdir(video_dir):
@@ -53,15 +59,19 @@ class MSR_VTT_VideoDataset(Dataset):
         elif os.path.isfile(video_dir):
             self.video2data = np.load(video_dir)
         self.video_ids = list(self.video2data.keys())
+        # read video split info
+        with open(annotation_file, encoding='utf-8') as f:
+            annotation = json.load(f)
+        self.video2split = {i["video_id"]: i["split"] for i in annotation["video"]}
         logger.info("successfully loading {} videos".format(len(self.video2data)))
 
         # load captions
         self.video2caption = {}
         if mode == "train" or "val":
-            with open(annotation_file, encoding='utf-8') as f:
-                annotation = json.load(f)
             captions = annotation["sentences"]
             for cap in tqdm(captions, desc="Loading annotations"):
+                if self.video2split[cap["video_id"]] != mode:
+                    continue
                 if cap["video_id"] not in self.video2caption:
                     self.video2caption[cap["video_id"]] = [cap["caption"]]
                 else:
@@ -69,10 +79,9 @@ class MSR_VTT_VideoDataset(Dataset):
             logger.info("successfully loading {} captions".format(len(captions)))
 
     def __getitem__(self, index):
-        caption = random.choice(self.video2caption[self.video_ids[index]])
-        # video_path = self.video_paths[index]
-        # frames = load_single_video(video_path, self.frames_num, self.frames_size, tensor=True)  # Tensor(T H W C)
-        frames = torch.tensor(self.video2data[self.video_ids[index]])
+        video_id = self.video_ids[index]
+        caption = random.choice(self.video2caption[video_id])
+        frames = torch.tensor(self.video2data[video_id])
         return frames, caption
 
     def __len__(self):
@@ -85,11 +94,11 @@ def msrvtt_collate_fn(data):
     :return: Tensor(N, T, H, W, C), {"input_ids", "token_type_ids", "attention_mask"}
     """
     global bert_tokenizer
-    video_data = torch.stack([i[0] for i in data])#.cuda()
+    video_data = torch.stack([i[0] for i in data]).to(device)
     text_data = [i[1] for i in data]
     tokenized_caption = bert_tokenizer(text_data, padding=True)
     for k, v in tokenized_caption.items():
-        tokenized_caption[k] = torch.tensor(v)#.cuda()
+        tokenized_caption[k] = torch.tensor(v).cpu()
     return video_data, tokenized_caption
 
 
@@ -140,4 +149,3 @@ if __name__ == "__main__":
     #                   compress=True)
 
 # /data3/lzh/VATEX
-

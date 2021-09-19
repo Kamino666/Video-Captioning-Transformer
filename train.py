@@ -3,10 +3,137 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
 
-from model import VideoCaptionSwinTransformer
 from visualdl import LogWriter
+import os
+import time
+from tqdm import tqdm
+
+from model import VideoCaptionSwinTransformer
+from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
+from utils import MaskCriterion, EarlyStopping
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 writer = LogWriter(logdir="./log")
 
 
+class Opt:
+    """train config"""
+    batch_size = 8
+    lr = 0.001
+    learning_rate_patience = 20
+    early_stopping_patience = 30
+    save_path = r"./checkpoint"
+    MAX_EPOCHS = 200
+    save_freq = -1
+
+    """model config"""
+    patch_size = (2, 4, 4)
+    drop_path_rate = 0.1
+    patch_norm = True
+    window_size = (8, 7, 7)
+    depths = (2, 2, 6, 2)
+    embed_dim = 96
+    checkpoint_pth = r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth"
+    bert_type = "bert-base-uncased"
+    pretrained2d = False
+
+    """save config"""
+    training_token = "video_swin_patch{}_window{}_embed{}_depth{}_".format(
+        "".join([str(i) for i in patch_size]), "".join([str(i) for i in window_size]),
+        embed_dim, "".join([str(i) for i in depths])
+    )
+    start_time = time.strftime('%y_%m_%d_%H_%M_%S-', time.localtime())
+
+
+def train():
+    opt = Opt()
+    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
+                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
+    train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
+    dataset = MSR_VTT_VideoDataset(r"./data/buffer.npz",
+                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
+                                   mode="val")
+    val_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
+
+    vcst_model = VideoCaptionSwinTransformer(patch_size=opt.patch_size, drop_path_rate=opt.drop_path_rate,
+                                             patch_norm=opt.patch_norm, window_size=opt.window_size,
+                                             depths=opt.depths, embed_dim=opt.embed_dim,
+                                             checkpoint_pth=opt.checkpoint_pth,
+                                             bert_type=opt.bert_type, pretrained2d=False)
+
+    optimizer = optim.Adam(
+        vcst_model.parameters(),
+        lr=opt.lr,
+    )
+    # dynamic learning rate
+    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, verbose=True, patience=opt.learning_rate_patience
+    )
+    early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
+                                   verbose=True,
+                                   path=os.path.join(opt.save_path, opt.training_token, opt.start_time + 'earlystop.pth'))
+    criterion = MaskCriterion()
+
+    ###
+    ### start training
+    ###
+    for epoch in range(opt.MAX_EPOCHS):
+        # ****************************
+        #            train
+        # ****************************
+        train_running_loss = 0.0
+        loss_count = 0
+        for index, (frames, tokenized_cap) in enumerate(
+                tqdm(train_loader, desc="epoch:{}".format(epoch))):
+            optimizer.zero_grad()
+            vcst_model.train()
+
+            # probs [B, L, vocab_size]
+            probs = vcst_model(frames, tokenized_cap=tokenized_cap, mode='train')
+
+            loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
+
+            loss.backward()
+            optimizer.step()
+
+            train_running_loss += loss.item()
+            loss_count += 1
+
+        train_running_loss /= loss_count
+        writer.add_scalar('train_loss', train_running_loss, step=epoch)
+
+        # ****************************
+        #           validate
+        # ****************************
+        valid_running_loss = 0.0
+        loss_count = 0
+        for index, (frames, tokenized_cap) in enumerate(val_loader):
+            vcst_model.eval()
+
+            with torch.no_grad():
+                probs = vcst_model(frames, tokenized_cap=tokenized_cap, mode='val')
+                loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
+
+            valid_running_loss += loss.item()
+            loss_count += 1
+
+        valid_running_loss /= loss_count
+        writer.add_scalar('valid_loss', valid_running_loss, step=epoch)
+        writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
+
+        print("train loss:{} valid loss: {}".format(train_running_loss, valid_running_loss))
+        lr_scheduler.step(valid_running_loss)
+
+        # early stop
+        early_stopping(valid_running_loss, vcst_model)
+        if early_stopping.early_stop:
+            print("Early stopping")
+            break
+
+        # save checkpoint
+        if opt.save_freq != -1 and epoch % opt.save_freq == 0:
+            print('epoch:{}, saving checkpoint'.format(epoch))
+            torch.save(vcst_model, os.path.join(opt.save_path, opt.training_token,
+                                                opt.start_time + str(epoch) + '.pth'))
+    # save model
+    torch.save(vcst_model, os.path.join(opt.save_path, opt.training_token, opt.start_time + 'final.pth'))
