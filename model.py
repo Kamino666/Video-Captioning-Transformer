@@ -741,7 +741,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                  qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=1, decoder_layers=1,
-                 bert_embedding=True, bert_type="bert-base-cased", vocab_size=30522,
+                 bert_embedding=True, bert_type="bert-base-uncased", vocab_size=30522,
                  out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cpu")):
         super().__init__()
         # save info
@@ -769,7 +769,7 @@ class VideoCaptionSwinTransformer(nn.Module):
         # forward(input_ids=None, attention_mask=None)
         self.bert_embedding = bert_embedding
         if bert_embedding is True:
-            self.embedding = BertModel.from_pretrained("bert-base-uncased").to(device)
+            self.embedding = BertModel.from_pretrained(bert_type).to(device)
             self.embedding.eval()
         else:
             self.embedding = nn.Embedding(vocab_size, 768).to(device)
