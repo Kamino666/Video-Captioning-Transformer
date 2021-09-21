@@ -101,7 +101,8 @@ class MaskCriterion(nn.Module):
         # target, mask = target[:, 1:], mask[:, 1:]
         # loss [N*seq_len]
         loss = self.loss_fn(logits.contiguous().view(item_sum, -1),
-                            target.contiguous().view(-1))
+                            target.contiguous().view(-1)
+                            )
         mask_loss = loss * mask.contiguous().view(-1)
         output = torch.sum(mask_loss) / torch.sum(mask)
         return output

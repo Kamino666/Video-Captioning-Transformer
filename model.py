@@ -38,7 +38,7 @@ def get_root_logger(log_file=None, log_level=logging.INFO):
     return get_logger(__name__.split('.')[0], log_file, log_level)
 
 
-mylogger = get_root_logger(log_level=logging.DEBUG)
+mylogger = get_root_logger(log_level=logging.INFO)
 
 
 class Mlp(nn.Module):
@@ -706,11 +706,11 @@ def create_mask(src, tgt, PAD_IDX):
     src_seq_len = src.shape[1]
     tgt_seq_len = tgt.shape[1]
 
-    tgt_mask = generate_square_subsequent_mask(tgt_seq_len)
-    src_mask = torch.zeros((src_seq_len, src_seq_len)).type(torch.bool)
+    tgt_mask = generate_square_subsequent_mask(tgt_seq_len)#.cuda()
+    src_mask = torch.zeros((src_seq_len, src_seq_len)).type(torch.bool)#.cuda()
 
-    src_padding_mask = (src == PAD_IDX)#.transpose(0, 1)
-    tgt_padding_mask = (tgt == PAD_IDX)#.transpose(0, 1)
+    src_padding_mask = (src == PAD_IDX)#.cuda()#.transpose(0, 1)
+    tgt_padding_mask = (tgt == PAD_IDX)#.cuda()#.transpose(0, 1)
     return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
 
 
@@ -740,7 +740,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                  depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], window_size=(8, 7, 7), mlp_ratio=4.,
                  qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
-                 use_checkpoint=False, encoder_dim=768, decoder_head=8, decoder_layers=4,
+                 use_checkpoint=False, encoder_dim=768, decoder_head=1, decoder_layers=1,
                  bert_embedding=True, bert_type="bert-base-cased", vocab_size=30522,
                  out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cpu")):
         super().__init__()
@@ -759,7 +759,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                                          patch_norm=patch_norm, frozen_stages=frozen_stages,
                                          use_checkpoint=use_checkpoint).to(device)
         load_checkpoint(self.encoder, checkpoint_pth, map_location=str(device), revise_keys=[(r'^backbone\.', '')])
-        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(torch.device("cpu"))
+        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(device)
 
         # decoder
         decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
@@ -769,10 +769,10 @@ class VideoCaptionSwinTransformer(nn.Module):
         # forward(input_ids=None, attention_mask=None)
         self.bert_embedding = bert_embedding
         if bert_embedding is True:
-            self.embedding = BertModel.from_pretrained("bert-base-uncased").to(torch.device("cpu"))
+            self.embedding = BertModel.from_pretrained("bert-base-uncased").to(device)
             self.embedding.eval()
         else:
-            self.embedding = nn.Embedding(vocab_size, 768)
+            self.embedding = nn.Embedding(vocab_size, 768).to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
 
         # out MLP
@@ -796,13 +796,13 @@ class VideoCaptionSwinTransformer(nn.Module):
         mylogger.debug("video: {}".format(str(video.device)))
         video = rearrange(video, 'n t h w c -> n c t h w')
         enc_video = self.encoder(video)
-        # mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # enc_video: torch.Size([2, 768, 20, 7, 7])
-        enc_video = self.avg_pool(enc_video).squeeze_()
+        mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # enc_video: torch.Size([2, 768, 20, 7, 7])
+        enc_video = self.avg_pool(enc_video).squeeze_(dim=4).squeeze_(dim=3)
         enc_video = rearrange(enc_video, 'n c t-> t n c')
         mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # torch.Size([20, 2, 7, 7, 768])
 
         # Decode
-        if mode == "train":
+        if mode == "train" or "val":
             # embedding the caption
             # enc_caption: torch.Size([N, max_len, 768])
             enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
@@ -813,6 +813,8 @@ class VideoCaptionSwinTransformer(nn.Module):
             mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # enc_caption: torch.Size([25, 2, 768])
             mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))  # tgt_mask: torch.Size([25, 25])
             mylogger.debug("tgt_key_padding_mask: {}".format(tgt_padding_mask.shape))  # tgt_key_padding_mask: torch.Size([2, 25])
+            tgt_mask = tgt_mask.to(enc_caption.device)
+            tgt_padding_mask = tgt_padding_mask.to(enc_caption.device)
 
             # dec_caption: (T, N, E)
             dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
@@ -833,11 +835,11 @@ class VideoCaptionSwinTransformer(nn.Module):
             cls_count = 0
             for i in range(self.max_out_len - 1):
                 # generate mask
-                cap_padding_mask = (current_word == pad_id).transpose(1, 0)
+                cap_padding_mask = (current_word == pad_id).transpose(1, 0).to(self.device)
                 mylogger.debug("cap_padding_mask: {}".format(str(cap_padding_mask.shape)))  # cap_padding_mask: torch.Size([2, 1])
 
                 # embedding current word
-                current_word = current_word.to(torch.int)
+                current_word = current_word.to(torch.int).to(self.device)
                 mylogger.debug("current_word: {}".format(str(current_word.shape)))
                 embed_current_word = self.embedding(input_ids=current_word).last_hidden_state.to(self.device)
                 mylogger.debug("embed_current_word: {}".format(str(embed_current_word.shape)))  # embed_current_word: torch.Size([2, 1, 768])
@@ -858,7 +860,10 @@ class VideoCaptionSwinTransformer(nn.Module):
                 if cls_count >= batch_size:
                     break
             words = torch.stack(words).transpose(0, 1).squeeze_()
-            return words
+            mylogger.debug("words: {}".format(str(words.shape)))
+            tokens = self.tokenizer.convert_ids_to_tokens(words)
+            result_strings = self.tokenizer.convert_tokens_to_string(tokens)
+            return result_strings
 
 
 if __name__ == '__main__':

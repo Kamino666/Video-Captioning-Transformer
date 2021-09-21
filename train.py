@@ -16,20 +16,19 @@ from utils import MaskCriterion, EarlyStopping
 
 # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 writer = LogWriter(logdir="./log")
-device = torch.device('cuda')
-# local_rank = int(os.environ['LOCAL_RANK'])
+local_rank = int(os.environ['LOCAL_RANK'])  # int 0/1/2/3
+
 
 # 新增：DDP backend初始化
-# torch.cuda.set_device(local_rank)
-# dist.init_process_group(backend='nccl')  # nccl是GPU设备上最快、最推荐的后端
+dist.init_process_group(backend='nccl')  # nccl是GPU设备上最快、最推荐的后端
 
 # 构造模型
-# device = torch.device("cuda", local_rank)
+device = torch.device("cuda", local_rank)
 
 
 class Opt:
     """train config"""
-    batch_size = 8
+    batch_size = 4
     lr = 0.001
     learning_rate_patience = 20
     early_stopping_patience = 30
@@ -61,15 +60,14 @@ def train():
     opt = Opt()
     trainset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
                                     r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
-                                    gpu=False if device is torch.device("cpu") else True)
-    # train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
-    train_loader = DataLoader(trainset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
+                                    gpu=True, local_rank=local_rank)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
+    train_loader = DataLoader(trainset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size, sampler=train_sampler)
     valset = MSR_VTT_VideoDataset(r"./data/msrvtt-validate-buffer.npz",
                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
-                                  gpu=False if device is torch.device("cpu") else True,
-                                  mode="val")
-    # val_sampler = torch.utils.data.distributed.DistributedSampler(valset)
-    val_loader = DataLoader(valset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size)
+                                  gpu=True, local_rank=local_rank, mode="validate")
+    val_sampler = torch.utils.data.distributed.DistributedSampler(valset)
+    val_loader = DataLoader(valset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size, sampler=val_sampler)
 
     vcst_model = VideoCaptionSwinTransformer(patch_size=opt.patch_size, drop_path_rate=opt.drop_path_rate,
                                              patch_norm=opt.patch_norm, window_size=opt.window_size,
@@ -77,7 +75,8 @@ def train():
                                              checkpoint_pth=opt.checkpoint_pth,
                                              bert_type=opt.bert_type, pretrained2d=False,
                                              frozen_stages=opt.frozen_stages, device=device)
-    # vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank)
+    vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
+    # vcst_model = nn.DataParallel(vcst_model)
 
     optimizer = optim.Adam(
         vcst_model.parameters(),
@@ -97,8 +96,8 @@ def train():
     ### start training
     ###
     for epoch in range(opt.MAX_EPOCHS):
-        # train_loader.sampler.set_epoch(epoch)
-        # val_loader.sampler.set_epoch(epoch)
+        train_loader.sampler.set_epoch(epoch)
+        val_loader.sampler.set_epoch(epoch)
         # ****************************
         #            train
         # ****************************
@@ -114,7 +113,8 @@ def train():
             # prob torch.Size([25, 2, 30522])
             probs = probs.transpose(1, 0)
 
-            print(probs.shape, tokenized_cap["input_ids"].shape, tokenized_cap["attention_mask"].shape)
+            # print(probs.shape, tokenized_cap["input_ids"].shape, tokenized_cap["attention_mask"].shape)
+            # print(probs.dtype, tokenized_cap["input_ids"].dtype, tokenized_cap["attention_mask"].dtype)
             loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
 
             loss.backward()

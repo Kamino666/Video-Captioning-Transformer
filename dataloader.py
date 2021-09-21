@@ -15,7 +15,7 @@ import os
 
 logger = logging.getLogger("main")
 bert_tokenizer = None
-device = torch.device("cuda")
+device = None
 
 
 class MSR_VTT_VideoDataset(Dataset):
@@ -23,7 +23,7 @@ class MSR_VTT_VideoDataset(Dataset):
                  frames_num=80, frames_size=224,
                  mode="train", buffer_save_path=r"./data/buffer.npz",
                  random_seed=10503, bert_type='bert-base-uncased',
-                 gpu=True):
+                 gpu=True, local_rank=0):
         """ Video Dataset
             Args:
                 video_dir (str): buffer file or raw videos dir
@@ -38,13 +38,14 @@ class MSR_VTT_VideoDataset(Dataset):
         self.frames_size = frames_size
         self.bert_type = bert_type
 
-        # choice device
+        # define device
         global device
         if gpu is True:
-            device = torch.device("cuda")
+            device = torch.device("cuda", local_rank)
         else:
             device = torch.device("cpu")
 
+        # init bert_tokenizer
         global bert_tokenizer
         bert_tokenizer = AutoTokenizer.from_pretrained(bert_type)
 
@@ -59,6 +60,7 @@ class MSR_VTT_VideoDataset(Dataset):
         elif os.path.isfile(video_dir):
             self.video2data = np.load(video_dir)
         self.video_ids = list(self.video2data.keys())
+
         # read video split info
         with open(annotation_file, encoding='utf-8') as f:
             annotation = json.load(f)
@@ -98,7 +100,7 @@ def msrvtt_collate_fn(data):
     text_data = [i[1] for i in data]
     tokenized_caption = bert_tokenizer(text_data, padding=True)
     for k, v in tokenized_caption.items():
-        tokenized_caption[k] = torch.tensor(v).cpu()
+        tokenized_caption[k] = torch.tensor(v).to(device)
     return video_data, tokenized_caption
 
 
