@@ -18,7 +18,6 @@ from utils import MaskCriterion, EarlyStopping
 writer = LogWriter(logdir="./log")
 local_rank = int(os.environ['LOCAL_RANK'])  # int 0/1/2/3
 
-
 # 新增：DDP backend初始化
 dist.init_process_group(backend='nccl')  # nccl是GPU设备上最快、最推荐的后端
 
@@ -76,7 +75,6 @@ def train():
                                              bert_type=opt.bert_type, pretrained2d=False,
                                              frozen_stages=opt.frozen_stages, device=device)
     vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-    # vcst_model = nn.DataParallel(vcst_model)
 
     optimizer = optim.Adam(
         vcst_model.parameters(),
@@ -88,68 +86,19 @@ def train():
     )
     early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
                                    verbose=True,
-                                   path=os.path.join(opt.save_path, opt.training_token,
-                                                     opt.start_time + 'earlystop.pth'))
+                                   path=os.path.join(opt.save_path, opt.training_token + opt.start_time + 'earlystop.pth'))
     criterion = MaskCriterion()
 
-    ###
-    ### start training
-    ###
+    # Start Training
     for epoch in range(opt.MAX_EPOCHS):
-        train_loader.sampler.set_epoch(epoch)
-        val_loader.sampler.set_epoch(epoch)
-        # ****************************
-        #            train
-        # ****************************
-        train_running_loss = 0.0
-        loss_count = 0
-        for index, (frames, tokenized_cap) in enumerate(
-                tqdm(train_loader, desc="epoch:{}".format(epoch))):
-            optimizer.zero_grad()
-            vcst_model.train()
-
-            # probs [B, L, vocab_size]
-            probs = vcst_model(frames, tokenized_cap=tokenized_cap, mode='train')
-            # prob torch.Size([25, 2, 30522])
-            probs = probs.transpose(1, 0)
-
-            # print(probs.shape, tokenized_cap["input_ids"].shape, tokenized_cap["attention_mask"].shape)
-            # print(probs.dtype, tokenized_cap["input_ids"].dtype, tokenized_cap["attention_mask"].dtype)
-            loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
-
-            loss.backward()
-            optimizer.step()
-
-            train_running_loss += loss.item()
-            loss_count += 1
-
-        train_running_loss /= loss_count
-        writer.add_scalar('train_loss', train_running_loss, step=epoch)
-
-        # ****************************
-        #           validate
-        # ****************************
-        valid_running_loss = 0.0
-        loss_count = 0
-        for index, (frames, tokenized_cap) in enumerate(val_loader):
-            vcst_model.eval()
-
-            with torch.no_grad():
-                probs = vcst_model(frames, tokenized_cap=tokenized_cap, mode='val')
-                probs = probs.transpose(1, 0)
-                loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
-
-            valid_running_loss += loss.item()
-            loss_count += 1
-
-        valid_running_loss /= loss_count
-        writer.add_scalar('valid_loss', valid_running_loss, step=epoch)
-        writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
-
+        train_running_loss = train_epoch(vcst_model, train_loader, optimizer, epoch, criterion)
+        valid_running_loss = val_epoch(vcst_model, val_loader, epoch, criterion)
         print("train loss:{} valid loss: {}".format(train_running_loss, valid_running_loss))
+
+        writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
         lr_scheduler.step(valid_running_loss)
 
-        # early stop
+        # early stopping
         early_stopping(valid_running_loss, vcst_model)
         if early_stopping.early_stop:
             print("Early stopping")
@@ -158,13 +107,58 @@ def train():
         # save checkpoint
         if opt.save_freq != -1 and epoch % opt.save_freq == 0:
             print('epoch:{}, saving checkpoint'.format(epoch))
-            # torch.save(vcst_model, os.path.join(opt.save_path, opt.training_token,
-            #                                     opt.start_time + str(epoch) + '.pth'))
-            torch.save(vcst_model.module, os.path.join(opt.save_path, opt.training_token, opt.start_time+ str(epoch) + 'final.pth'))
+            torch.save(vcst_model.module,
+                       os.path.join(opt.save_path, opt.training_token + opt.start_time + str(epoch) + 'final.pth'))
     # save model
-    # torch.save(vcst_model, os.path.join(opt.save_path, opt.training_token, opt.start_time + 'final.pth'))
     if dist.get_rank() == 0:
-        torch.save(vcst_model.module, os.path.join(opt.save_path, opt.training_token, opt.start_time + 'final.pth'))
+        torch.save(vcst_model.module, os.path.join(opt.save_path, opt.training_token + opt.start_time + 'final.pth'))
+
+
+def train_epoch(model, train_loader, optimizer, epoch, criterion):
+    """train one epoch"""
+    train_loader.sampler.set_epoch(epoch)
+    train_running_loss = 0.0
+    loss_count = 0
+    for index, (frames, tokenized_cap) in enumerate(
+            tqdm(train_loader, desc="epoch:{}".format(epoch))):
+        optimizer.zero_grad()
+        model.train()
+
+        # probs [B, L, vocab_size]
+        probs = model(frames, tokenized_cap=tokenized_cap, mode='train')
+        # prob torch.Size([25-1, 2, 30522])
+        probs = probs.transpose(1, 0)
+
+        loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
+        loss.backward()
+        optimizer.step()
+
+        train_running_loss += loss.item()
+        loss_count += 1
+
+    train_running_loss /= loss_count
+    writer.add_scalar('train_loss', train_running_loss, step=epoch)
+    return train_running_loss
+
+
+def val_epoch(model, val_loader, epoch, criterion):
+    val_loader.sampler.set_epoch(epoch)
+    valid_running_loss = 0.0
+    loss_count = 0
+    for index, (frames, tokenized_cap) in enumerate(val_loader):
+        model.eval()
+
+        with torch.no_grad():
+            probs = model(frames, tokenized_cap=tokenized_cap, mode='val')
+            probs = probs.transpose(1, 0)
+            loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
+
+        valid_running_loss += loss.item()
+        loss_count += 1
+
+    valid_running_loss /= loss_count
+    writer.add_scalar('valid_loss', valid_running_loss, step=epoch)
+    return valid_running_loss
 
 
 if __name__ == "__main__":

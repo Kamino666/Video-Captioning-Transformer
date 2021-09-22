@@ -779,8 +779,7 @@ class VideoCaptionSwinTransformer(nn.Module):
         self.out_drop = nn.Dropout(p=out_drop).to(device)
         self.out_linear = nn.Linear(encoder_dim, vocab_size).to(device)
 
-    def forward(self, video, tokenized_cap=None,
-                mode="train"):
+    def forward(self, video, tokenized_cap=None, mode="train"):
         """
         Input the VideoTensor(N,T,H,W,C) and VideoMask(N,T,H,W,C)
         :param mode: "train" or "test"/"val"
@@ -806,9 +805,9 @@ class VideoCaptionSwinTransformer(nn.Module):
             # embedding the caption
             # enc_caption: torch.Size([N, max_len, 768])
             enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
-            enc_caption = rearrange(enc_caption, 'n t c -> t n c')
+            enc_caption = rearrange(enc_caption, 'n t c -> t n c')[:-1]  # SEP not included
             _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
-                                                           tokenized_cap['input_ids'],
+                                                           tokenized_cap['input_ids'][:-1],
                                                            PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
             mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # enc_caption: torch.Size([25, 2, 768])
             mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))  # tgt_mask: torch.Size([25, 25])
@@ -820,15 +819,16 @@ class VideoCaptionSwinTransformer(nn.Module):
             dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
                                        tgt_mask=tgt_mask,
                                        tgt_key_padding_mask=tgt_padding_mask)
-            mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([25, 2, 768])
+            mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([25-1, 2, 768])
 
             # result: (T, N, 1)
-            prob = self.out_linear(self.out_drop(dec_caption))  # prob torch.Size([25, 2, 30522])
+            prob = self.out_linear(self.out_drop(dec_caption))  # prob torch.Size([25-1, 2, 30522])
             mylogger.debug("prob: {}".format(str(prob.shape)))
             return prob
         else:
             pad_id = self.tokenizer.convert_tokens_to_ids('[PAD]')
             cls_id = self.tokenizer.convert_tokens_to_ids('[CLS]')
+            sep_id = self.tokenizer.convert_tokens_to_ids('[SEP]')
             current_word = torch.ones([batch_size, 1]) * cls_id  # [B, 1]
 
             words = []
@@ -850,16 +850,16 @@ class VideoCaptionSwinTransformer(nn.Module):
                 mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([2, 1, 768])
 
                 prob = self.out_linear(self.out_drop(dec_caption))
-                mylogger.debug("prob: {}".format(str(prob.shape)))  # prob torch.Size([25, 2, 30522])
+                mylogger.debug("prob: {}".format(str(prob.shape)))  # prob torch.Size([1, 2, 30522])
                 _, current_word = torch.max(prob, dim=2)
                 mylogger.debug("current_word: {}".format(str(current_word.shape)))  # current_word: torch.Size([2, 1])
                 words.append(current_word)
 
-                # break if all captions reach [CLS]
-                cls_count += torch.sum((current_word == cls_id).to(dtype=torch.int))
+                # break if all captions reach [SEP]
+                cls_count += torch.sum((current_word == sep_id).to(dtype=torch.int))
                 if cls_count >= batch_size:
                     break
-            words = torch.stack(words).transpose(0, 1).squeeze_()
+            words = torch.stack(words).transpose(0, 1).squeeze_()  # words: torch.Size([2, max_len, 1])
             mylogger.debug("words: {}".format(str(words.shape)))
             tokens = self.tokenizer.convert_ids_to_tokens(words)
             result_strings = self.tokenizer.convert_tokens_to_string(tokens)
