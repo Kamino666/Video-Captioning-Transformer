@@ -807,7 +807,7 @@ class VideoCaptionSwinTransformer(nn.Module):
             enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
             enc_caption = rearrange(enc_caption, 'n t c -> t n c')[:-1]  # SEP not included
             _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
-                                                           tokenized_cap['input_ids'][:-1],
+                                                           tokenized_cap['input_ids'][:, -1],
                                                            PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
             mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # enc_caption: torch.Size([25, 2, 768])
             mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))  # tgt_mask: torch.Size([25, 25])
