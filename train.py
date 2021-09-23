@@ -27,7 +27,7 @@ device = torch.device("cuda", local_rank)
 
 class Opt:
     """train config"""
-    batch_size = 4
+    batch_size = 8
     lr = 0.001
     learning_rate_patience = 20
     early_stopping_patience = 30
@@ -45,7 +45,9 @@ class Opt:
     checkpoint_pth = r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth"
     bert_type = "bert-base-uncased"
     pretrained2d = False
-    frozen_stages = 4
+    frozen_stages = -1
+    decoder_head = 3
+    decoder_layers = 2
 
     """save config"""
     training_token = "video_swin_patch{}_window{}_embed{}_depth{}_".format(
@@ -73,7 +75,8 @@ def train():
                                              depths=opt.depths, embed_dim=opt.embed_dim,
                                              checkpoint_pth=opt.checkpoint_pth,
                                              bert_type=opt.bert_type, pretrained2d=False,
-                                             frozen_stages=opt.frozen_stages, device=device)
+                                             frozen_stages=opt.frozen_stages, device=device,
+                                             decoder_layers=opt.decoder_layers, decoder_head=opt.decoder_head)
     vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     optimizer = optim.Adam(
