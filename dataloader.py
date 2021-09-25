@@ -2,8 +2,7 @@ import mmcv
 import numpy as np
 
 from torch.utils.data import Dataset, DataLoader
-import transformers
-from transformers import AutoTokenizer
+import torchvision
 import torch
 
 import json
@@ -19,35 +18,33 @@ device = None
 
 
 class MSR_VTT_VideoDataset(Dataset):
-    def __init__(self, video_dir, annotation_file,
-                 frames_num=80, frames_size=224,
+    def __init__(self, video_dir: str, annotation_file: str,
+                 frames_num=40, frames_size=224,
                  mode="train", buffer_save_path=r"./data/buffer.npz",
-                 random_seed=10503, bert_type='bert-base-uncased',
-                 gpu=True, local_rank=0):
-        """ Video Dataset
-            Args:
-                video_dir (str): buffer file or raw videos dir
-                annotation_file (str): the path of annotation_file
-                frames_num (int): the num of frames to be extracted from each video
-                frames_size (int): the size of frame
-                mode (str): captions will not be loaded if mode is test
-            """
+                 random_seed=10503):
+        """
+        load MSR_VTT dataset, output video tensor and raw text.
+        if input data is still video, this will generate a buffer numpy array file, which
+        will help accelerate the data loading during training.
+        :param video_dir: buffer file or raw videos dir
+        :param annotation_file: the path of annotation_file
+        :param int frames_num: the num of frames to be extracted from each video
+        :param int frames_size: the size of frame
+        :param str mode: captions will not be loaded if mode is test
+        :param str buffer_save_path: the path to save buffer data
+        :param int random_seed: random seed of select caption of a video
+        :return CPU frames, caption
+        """
         random.seed(random_seed)
         self.seed = random_seed
         self.frames_num = frames_num
         self.frames_size = frames_size
-        self.bert_type = bert_type
 
-        # define device
-        global device
-        if gpu is True:
-            device = torch.device("cuda", local_rank)
-        else:
-            device = torch.device("cpu")
-
-        # init bert_tokenizer
-        global bert_tokenizer
-        bert_tokenizer = AutoTokenizer.from_pretrained(bert_type)
+        # video transforms
+        self.tf = torchvision.transforms.Compose([
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375]),
+        ])
 
         # load video
         if os.path.isdir(video_dir):
@@ -83,7 +80,11 @@ class MSR_VTT_VideoDataset(Dataset):
     def __getitem__(self, index):
         video_id = self.video_ids[index]
         caption = random.choice(self.video2caption[video_id])
-        frames = torch.tensor(self.video2data[video_id], dtype=torch.float)
+        frames = []
+        for frame in self.video2data[video_id][::2]:
+            frames.append(self.tf(frame))
+        frames = torch.stack(frames).to(dtype=torch.float)
+
         return frames, caption
 
     def __len__(self):
@@ -92,16 +93,13 @@ class MSR_VTT_VideoDataset(Dataset):
 
 def msrvtt_collate_fn(data):
     """
+    stack the video data
     :param data: [(Tensor(T, H, W, C), str)]
-    :return: Tensor(N, T, H, W, C), {"input_ids", "token_type_ids", "attention_mask"}
+    :return: Tensor(N, T, H, W, C), list[str, str, ...]
     """
-    global bert_tokenizer
-    video_data = torch.stack([i[0] for i in data]).to(device)
+    video_data = torch.stack([i[0] for i in data])
     text_data = [i[1] for i in data]
-    tokenized_caption = bert_tokenizer(text_data, padding=True)
-    for k, v in tokenized_caption.items():
-        tokenized_caption[k] = torch.tensor(v).to(device)
-    return video_data, tokenized_caption
+    return video_data, text_data
 
 
 def load_single_video(video_path, frames_num, frames_size, tensor=False):

@@ -29,30 +29,40 @@ class Opt:
     """train config"""
     batch_size = 8
     lr = 0.001
+    weight_decay = 0
     learning_rate_patience = 20
     early_stopping_patience = 30
-    save_path = r"./checkpoint"
     MAX_EPOCHS = 200
     save_freq = -1
 
     """model config"""
-    patch_size = (2, 4, 4)
-    drop_path_rate = 0.1
-    patch_norm = True
-    window_size = (8, 7, 7)
-    depths = (2, 2, 6, 2)
-    embed_dim = 96
-    checkpoint_pth = r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth"
-    bert_type = "bert-base-uncased"
-    pretrained2d = False
-    frozen_stages = -1
-    decoder_head = 3
-    decoder_layers = 2
+    model_cfg = dict(
+        patch_size=(2, 4, 4),
+        drop_path_rate=0.1,
+        patch_norm=True,
+        window_size=(8, 7, 7),
+        depths=(2, 2, 6, 2),
+        embed_dim=96,
+        checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
+        pretrained2d=False,
+        frozen_stages=-1,
+        # newly added
+        decoder_head=3,
+        decoder_layers=2,
+        device=device,
+        tokenizer_type="bert-base-uncased",
+        bert="bert-base-uncased",  # or None
+    )
 
     """save config"""
-    training_token = "video_swin_patch{}_window{}_embed{}_depth{}_".format(
-        "".join([str(i) for i in patch_size]), "".join([str(i) for i in window_size]),
-        embed_dim, "".join([str(i) for i in depths])
+    save_path = r"./checkpoint"
+    training_token = "video_swin_patch{}_window{}_embed{}_depth{}_dhead{}_dlayer{}".format(
+        "".join([str(i) for i in model_cfg["patch_size"]]),
+        "".join([str(i) for i in model_cfg["window_size"]]),
+        model_cfg["embed_dim"],
+        "".join([str(i) for i in model_cfg["depths"]]),
+        model_cfg["decoder_head"],
+        model_cfg["decoder_layers"],
     )
     start_time = time.strftime('%y_%m_%d_%H_%M_%S-', time.localtime())
 
@@ -60,28 +70,21 @@ class Opt:
 def train():
     opt = Opt()
     trainset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
-                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
-                                    gpu=True, local_rank=local_rank)
+                                    r"./data/MSRVTT-annotations/train_val_videodatainfo.json")
     train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
     train_loader = DataLoader(trainset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size, sampler=train_sampler)
     valset = MSR_VTT_VideoDataset(r"./data/msrvtt-validate-buffer.npz",
-                                  r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json",
-                                  gpu=True, local_rank=local_rank, mode="validate")
+                                  r"./data/MSRVTT-annotations/train_val_videodatainfo.json", mode="validate")
     val_sampler = torch.utils.data.distributed.DistributedSampler(valset)
     val_loader = DataLoader(valset, collate_fn=msrvtt_collate_fn, batch_size=opt.batch_size, sampler=val_sampler)
 
-    vcst_model = VideoCaptionSwinTransformer(patch_size=opt.patch_size, drop_path_rate=opt.drop_path_rate,
-                                             patch_norm=opt.patch_norm, window_size=opt.window_size,
-                                             depths=opt.depths, embed_dim=opt.embed_dim,
-                                             checkpoint_pth=opt.checkpoint_pth,
-                                             bert_type=opt.bert_type, pretrained2d=False,
-                                             frozen_stages=opt.frozen_stages, device=device,
-                                             decoder_layers=opt.decoder_layers, decoder_head=opt.decoder_head)
+    vcst_model = VideoCaptionSwinTransformer(**opt.model_cfg)
     vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     optimizer = optim.Adam(
         vcst_model.parameters(),
         lr=opt.lr,
+        weight_decay=opt.weight_decay
     )
     # dynamic learning rate
     lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -89,7 +92,8 @@ def train():
     )
     early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
                                    verbose=True,
-                                   path=os.path.join(opt.save_path, opt.training_token + opt.start_time + 'earlystop.pth'))
+                                   path=os.path.join(opt.save_path,
+                                                     opt.training_token + opt.start_time + 'earlystop.pth'))
     criterion = MaskCriterion()
 
     # Start Training
@@ -102,19 +106,20 @@ def train():
         lr_scheduler.step(valid_running_loss)
 
         # early stopping
-        early_stopping(valid_running_loss, vcst_model)
+        early_stopping(valid_running_loss, vcst_model.module)
         if early_stopping.early_stop:
             print("Early stopping")
             break
 
         # save checkpoint
-        if opt.save_freq != -1 and epoch % opt.save_freq == 0:
+        if dist.get_rank() == 0 and opt.save_freq != -1 and epoch % opt.save_freq == 0:
             print('epoch:{}, saving checkpoint'.format(epoch))
             torch.save(vcst_model.module,
                        os.path.join(opt.save_path, opt.training_token + opt.start_time + str(epoch) + 'final.pth'))
     # save model
     if dist.get_rank() == 0:
-        torch.save(vcst_model.module, os.path.join(opt.save_path, opt.training_token + opt.start_time + 'final.pth'))
+        torch.save(vcst_model.module,
+                   os.path.join(opt.save_path, opt.training_token + opt.start_time + 'final.pth'))
 
 
 def train_epoch(model, train_loader, optimizer, epoch, criterion):
