@@ -729,7 +729,7 @@ class VideoCaptionSwinTransformer(nn.Module):
                  qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=1, decoder_layers=1,
-                 out_drop=0.3, checkpoint_pth=None, device=torch.device(),
+                 out_drop=0.3, checkpoint_pth=None, device=torch.device("cpu"),
                  tokenizer_type="bert-base-uncased", bert="bert-base-uncased"):
         super().__init__()
         # save info
@@ -770,7 +770,6 @@ class VideoCaptionSwinTransformer(nn.Module):
         # out MLP
         self.out_drop = nn.Dropout(p=out_drop).to(device)
         self.out_linear = nn.Linear(encoder_dim, self.vocab_size).to(device)
-
 
 
     def forward(self, video: Tensor, caption: dict):

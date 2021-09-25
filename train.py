@@ -136,7 +136,8 @@ def train_epoch(model, train_loader, optimizer, epoch, criterion, tokenizer):
         model.train()
 
         tokenized_cap = tokenizer(caption, padding=True, return_tensors="pt")
-        probs = model(frames, tokenized_cap)
+        tokenized_cap = {k: v.to(device) for k, v in tokenized_cap.items()}
+        probs = model(frames, tokenized_cap)[:, :-1, :]
         loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
 
         loss.backward()
@@ -159,7 +160,8 @@ def val_epoch(model, val_loader, epoch, criterion, tokenizer):
 
         with torch.no_grad():
             tokenized_cap = tokenizer(caption, padding=True, return_tensors="pt")
-            probs = model(frames, tokenized_cap)
+            tokenized_cap = {k: v.to(device) for k, v in tokenized_cap.items()}
+            probs = model(frames, tokenized_cap)[:, :-1, :]
             loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
 
         valid_running_loss += loss.item()
