@@ -11,10 +11,9 @@ from tqdm import tqdm
 import logging
 import random
 import os
+from einops import rearrange
 
 logger = logging.getLogger("main")
-bert_tokenizer = None
-device = None
 
 
 class MSR_VTT_VideoDataset(Dataset):
@@ -84,6 +83,7 @@ class MSR_VTT_VideoDataset(Dataset):
         for frame in self.video2data[video_id][::2]:
             frames.append(self.tf(frame))
         frames = torch.stack(frames).to(dtype=torch.float)
+        frames = rearrange(frames, "t c h w -> t h w c")
 
         return frames, caption
 

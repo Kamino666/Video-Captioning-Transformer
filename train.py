@@ -9,6 +9,7 @@ from visualdl import LogWriter
 import os
 import time
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 from model import VideoCaptionSwinTransformer
 from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
@@ -81,6 +82,8 @@ def train():
     vcst_model = VideoCaptionSwinTransformer(**opt.model_cfg)
     vcst_model = DDP(vcst_model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
+    tokenizer = AutoTokenizer.from_pretrained(opt.model_cfg["tokenizer_type"])
+
     optimizer = optim.Adam(
         vcst_model.parameters(),
         lr=opt.lr,
@@ -98,8 +101,8 @@ def train():
 
     # Start Training
     for epoch in range(opt.MAX_EPOCHS):
-        train_running_loss = train_epoch(vcst_model, train_loader, optimizer, epoch, criterion)
-        valid_running_loss = val_epoch(vcst_model, val_loader, epoch, criterion)
+        train_running_loss = train_epoch(vcst_model, train_loader, optimizer, epoch, criterion, tokenizer)
+        valid_running_loss = val_epoch(vcst_model, val_loader, epoch, criterion, tokenizer)
         print("train loss:{} valid loss: {}".format(train_running_loss, valid_running_loss))
 
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
@@ -122,22 +125,20 @@ def train():
                    os.path.join(opt.save_path, opt.training_token + opt.start_time + 'final.pth'))
 
 
-def train_epoch(model, train_loader, optimizer, epoch, criterion):
+def train_epoch(model, train_loader, optimizer, epoch, criterion, tokenizer):
     """train one epoch"""
     train_loader.sampler.set_epoch(epoch)
     train_running_loss = 0.0
     loss_count = 0
-    for index, (frames, tokenized_cap) in enumerate(
+    for index, (frames, caption) in enumerate(
             tqdm(train_loader, desc="epoch:{}".format(epoch))):
         optimizer.zero_grad()
         model.train()
 
-        # probs [B, L, vocab_size]
-        probs = model(frames, tokenized_cap=tokenized_cap, mode='train')
-        # prob torch.Size([25-1, 2, 30522])
-        probs = probs.transpose(1, 0)
-
+        tokenized_cap = tokenizer(caption, padding=True, return_tensors="pt")
+        probs = model(frames, tokenized_cap)
         loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
+
         loss.backward()
         optimizer.step()
 
@@ -149,16 +150,16 @@ def train_epoch(model, train_loader, optimizer, epoch, criterion):
     return train_running_loss
 
 
-def val_epoch(model, val_loader, epoch, criterion):
+def val_epoch(model, val_loader, epoch, criterion, tokenizer):
     val_loader.sampler.set_epoch(epoch)
     valid_running_loss = 0.0
     loss_count = 0
-    for index, (frames, tokenized_cap) in enumerate(val_loader):
+    for index, (frames, caption) in enumerate(val_loader):
         model.eval()
 
         with torch.no_grad():
-            probs = model(frames, tokenized_cap=tokenized_cap, mode='val')
-            probs = probs.transpose(1, 0)
+            tokenized_cap = tokenizer(caption, padding=True, return_tensors="pt")
+            probs = model(frames, tokenized_cap)
             loss = criterion(probs, tokenized_cap["input_ids"], tokenized_cap["attention_mask"])
 
         valid_running_loss += loss.item()

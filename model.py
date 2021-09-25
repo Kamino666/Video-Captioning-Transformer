@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 import numpy as np
+from torch import Tensor
 from timm.models.layers import DropPath, trunc_normal_
 
 from functools import reduce, lru_cache
@@ -17,7 +18,6 @@ import logging
 from utils import get_logger
 from mmcv.runner import load_checkpoint
 from transformers import BertModel, AutoTokenizer
-import transformers as tf
 
 
 def get_root_logger(log_file=None, log_level=logging.INFO):
@@ -489,7 +489,7 @@ class SwinTransformer3D(nn.Module):
         embed_dim (int): Number of linear projection output channels. Default: 96.
         depths (tuple[int]): Depths of each Swin Transformer stage.
         num_heads (tuple[int]): Number of attention head of each stage.
-        window_size (int): Window size. Default: 7.
+        window_size (tuple[int]): Window size. Default: 7.
         mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4.
         qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: Truee
         qk_scale (float): Override default qk scale of head_dim ** -0.5 if set.
@@ -702,18 +702,6 @@ def generate_square_subsequent_mask(sz):
     return mask
 
 
-def create_mask(src, tgt, PAD_IDX):
-    src_seq_len = src.shape[1]
-    tgt_seq_len = tgt.shape[1]
-
-    tgt_mask = generate_square_subsequent_mask(tgt_seq_len)#.cuda()
-    src_mask = torch.zeros((src_seq_len, src_seq_len)).type(torch.bool)#.cuda()
-
-    src_padding_mask = (src == PAD_IDX)#.cuda()#.transpose(0, 1)
-    tgt_padding_mask = (tgt == PAD_IDX)#.cuda()#.transpose(0, 1)
-    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
-
-
 class VideoCaptionSwinTransformer(nn.Module):
     """ Video Captinoing Swin Transformer.
             add Transformer Decoder
@@ -737,17 +725,24 @@ class VideoCaptionSwinTransformer(nn.Module):
         """
 
     def __init__(self, pretrained=None, pretrained2d=True, patch_size=(2, 4, 4), in_chans=3, embed_dim=128,
-                 depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], window_size=(8, 7, 7), mlp_ratio=4.,
+                 depths=None, num_heads=None, window_size=(8, 7, 7), mlp_ratio=4.,
                  qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
                  use_checkpoint=False, encoder_dim=768, decoder_head=1, decoder_layers=1,
-                 bert_embedding=True, bert_type="bert-base-uncased", vocab_size=30522,
-                 out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cpu")):
+                 out_drop=0.3, checkpoint_pth=None, device=torch.device(),
+                 tokenizer_type="bert-base-uncased", bert="bert-base-uncased"):
         super().__init__()
         # save info
-        self.vocab_size = vocab_size
-        self.max_out_len = max_out_len
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_type)
+        self.vocab_size = tokenizer.vocab_size
+        self.pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
+        del tokenizer
         self.device = device
+        self.bert = bert
 
         # encoder
         self.encoder = SwinTransformer3D(pretrained=pretrained, pretrained2d=pretrained2d,
@@ -762,108 +757,143 @@ class VideoCaptionSwinTransformer(nn.Module):
         self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(device)
 
         # decoder
-        decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head, batch_first=True)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers).to(device)
 
         # BERT
-        # forward(input_ids=None, attention_mask=None)
-        self.bert_embedding = bert_embedding
-        if bert_embedding is True:
-            self.embedding = BertModel.from_pretrained(bert_type).to(device)
+        if bert is not None:
+            self.embedding = BertModel.from_pretrained(bert).to(device)
             self.embedding.eval()
         else:
-            self.embedding = nn.Embedding(vocab_size, 768).to(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
+            self.embedding = nn.Embedding(self.vocab_size, encoder_dim, padding_idx=self.pad_id).to(device)
 
         # out MLP
         self.out_drop = nn.Dropout(p=out_drop).to(device)
-        self.out_linear = nn.Linear(encoder_dim, vocab_size).to(device)
+        self.out_linear = nn.Linear(encoder_dim, self.vocab_size).to(device)
 
-    def forward(self, video, tokenized_cap=None, mode="train"):
-        """
-        Input the VideoTensor(N,T,H,W,C) and VideoMask(N,T,H,W,C)
-        :param mode: "train" or "test"/"val"
-        :param tokenized_cap: dict{input_ids, attention_mask}, the input id of caption
-        :param video: Tensor(N,T,H,W,C) of frames
-        :return:
-        """
-        assert (mode == "train" and tokenized_cap is not None) or mode != "train"
-        batch_size = video.shape[0]
 
+
+    def forward(self, video: Tensor, caption: dict):
+        """
+        Input the video tensor and caption ids
+        :param dict{input_ids, attention_mask} caption: caption id and mask
+        :param Tensor video: frames tensor
+        :return: Tensor prob: N T vocab_size
+        """
         # Encode the video
-        mylogger.debug("video: {}".format(str(video.shape)))
-        mylogger.debug("video: {}".format(str(video.device)))
         video = rearrange(video, 'n t h w c -> n c t h w')
-        enc_video = self.encoder(video)
-        mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # enc_video: torch.Size([2, 768, 20, 7, 7])
-        enc_video = self.avg_pool(enc_video).squeeze_(dim=4).squeeze_(dim=3)
-        enc_video = rearrange(enc_video, 'n c t-> t n c')
-        mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # torch.Size([20, 2, 7, 7, 768])
+        video = self.encoder(video)
+        video = self.avg_pool(video).squeeze_(dim=4).squeeze_(dim=3)
+        video = rearrange(video, 'n c t-> n t c')
 
         # Decode
-        if mode == "train" or "val":
-            # embedding the caption
-            # enc_caption: torch.Size([N, max_len, 768])
-            enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
-            enc_caption = rearrange(enc_caption, 'n t c -> t n c')[:-1]  # SEP not included
-            _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
-                                                           tokenized_cap['input_ids'][:, :-1],
-                                                           PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
-            mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # enc_caption: torch.Size([25, 2, 768])
-            mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))  # tgt_mask: torch.Size([25, 25])
-            mylogger.debug("tgt_key_padding_mask: {}".format(tgt_padding_mask.shape))  # tgt_key_padding_mask: torch.Size([2, 25])
-            tgt_mask = tgt_mask.to(enc_caption.device)
-            tgt_padding_mask = tgt_padding_mask.to(enc_caption.device)
-
-            # dec_caption: (T, N, E)
-            dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
-                                       tgt_mask=tgt_mask,
-                                       tgt_key_padding_mask=tgt_padding_mask)
-            mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([25-1, 2, 768])
-
-            # result: (T, N, 1)
-            prob = self.out_linear(self.out_drop(dec_caption))  # prob torch.Size([25-1, 2, 30522])
-            mylogger.debug("prob: {}".format(str(prob.shape)))
-            return prob
+        if self.bert is not None:
+            cap_embed = self.embedding(**caption).last_hidden_state.to(self.device)
         else:
-            pad_id = self.tokenizer.convert_tokens_to_ids('[PAD]')
-            cls_id = self.tokenizer.convert_tokens_to_ids('[CLS]')
-            sep_id = self.tokenizer.convert_tokens_to_ids('[SEP]')
-            current_word = torch.ones([batch_size, 1]) * cls_id  # [B, 1]
+            cap_embed = self.embedding(caption["input_ids"])
+        cap_mask = generate_square_subsequent_mask(caption["attention_mask"].shape[1]).to(self.device)
+        cap_padding_mask = caption["attention_mask"].to(torch.bool)
 
-            words = []
-            cls_count = 0
-            for i in range(self.max_out_len - 1):
-                # generate mask
-                cap_padding_mask = (current_word == pad_id).transpose(1, 0).to(self.device)
-                mylogger.debug("cap_padding_mask: {}".format(str(cap_padding_mask.shape)))  # cap_padding_mask: torch.Size([2, 1])
+        mylogger.debug("cap_embed: {}".format(cap_embed.shape))
+        mylogger.debug("video: {}".format(video.shape))
+        mylogger.debug("cap_mask: {}".format(cap_mask.shape))
+        mylogger.debug("cap_padding_mask: {}".format(cap_padding_mask.shape))
 
-                # embedding current word
-                current_word = current_word.to(torch.int).to(self.device)
-                mylogger.debug("current_word: {}".format(str(current_word.shape)))
-                embed_current_word = self.embedding(input_ids=current_word).last_hidden_state.to(self.device)
-                mylogger.debug("embed_current_word: {}".format(str(embed_current_word.shape)))  # embed_current_word: torch.Size([2, 1, 768])
+        dec_caption = self.decoder(tgt=cap_embed, memory=video,
+                                   tgt_mask=cap_mask,
+                                   tgt_key_padding_mask=cap_padding_mask)  # dec_caption: N, T, E
+        prob = self.out_linear(self.out_drop(dec_caption))  # prob: N, T, vocab_size
+        return prob
 
-                # dec_caption: (1, N, E)
-                dec_caption = self.decoder(tgt=embed_current_word, memory=enc_video,
-                                           tgt_key_padding_mask=cap_padding_mask)
-                mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([2, 1, 768])
+    def encode(self, video: Tensor):
+        video = rearrange(video, 'n t h w c -> n c t h w')
+        video = self.encoder(video)
+        video = self.avg_pool(video).squeeze_(dim=4).squeeze_(dim=3)
+        video = rearrange(video, 'n c t-> n t c')
+        return video
 
-                prob = self.out_linear(self.out_drop(dec_caption))
-                mylogger.debug("prob: {}".format(str(prob.shape)))  # prob torch.Size([1, 2, 30522])
-                _, current_word = torch.max(prob, dim=2)
-                mylogger.debug("current_word: {}".format(str(current_word.shape)))  # current_word: torch.Size([2, 1])
-                words.append(current_word)
+    def decode(self, enc_video: Tensor, words: Tensor, word_padding_mask=None):
+        """
+        :param Tensor enc_video: N T C
+        :param words: N Ti, generated caption ids
+        :param word_padding_mask: N Ti, generated caption mask
+        :return Tensor dec_caption: N, Ti, E
+        """
+        # Decode
+        if self.bert is not None:
+            cap_embed = self.embedding(words).last_hidden_state.to(self.device)
+        else:
+            cap_embed = self.embedding(words).last_hidden_state.to(self.device)
 
-                # break if all captions reach [SEP]
-                cls_count += torch.sum((current_word == sep_id).to(dtype=torch.int))
-                if cls_count >= batch_size:
-                    break
-            words = torch.stack(words).transpose(0, 1).squeeze_()  # words: torch.Size([2, max_len, 1])
-            mylogger.debug("words: {}".format(str(words.shape)))
-            tokens = self.tokenizer.convert_ids_to_tokens(words)
-            result_strings = self.tokenizer.convert_tokens_to_string(tokens)
-            return result_strings
+        cap_mask = generate_square_subsequent_mask(word_padding_mask.shape[1]).type(torch.bool).to(self.device)
+        dec_caption = self.decoder(tgt=cap_embed, memory=enc_video,
+                                   tgt_mask=cap_mask,
+                                   tgt_key_padding_mask=word_padding_mask)  # dec_caption: N, T, E
+        return dec_caption
+        # # Decode
+        # if mode == "train" or "val":
+        #     # embedding the caption
+        #     # enc_caption: torch.Size([N, max_len, 768])
+        #     enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
+        #     enc_caption = rearrange(enc_caption, 'n t c -> t n c')[:-1]  # SEP not included
+        #     _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
+        #                                                    tokenized_cap['input_ids'][:, :-1],
+        #                                                    PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
+        #     mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # enc_caption: torch.Size([25, 2, 768])
+        #     mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))  # tgt_mask: torch.Size([25, 25])
+        #     mylogger.debug("tgt_key_padding_mask: {}".format(tgt_padding_mask.shape))  # tgt_key_padding_mask: torch.Size([2, 25])
+        #     tgt_mask = tgt_mask.to(enc_caption.device)
+        #     tgt_padding_mask = tgt_padding_mask.to(enc_caption.device)
+        #
+        #     # dec_caption: (T, N, E)
+        #     dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
+        #                                tgt_mask=tgt_mask,
+        #                                tgt_key_padding_mask=tgt_padding_mask)
+        #     mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([25-1, 2, 768])
+        #
+        #     # result: (T, N, 1)
+        #     prob = self.out_linear(self.out_drop(dec_caption))  # prob torch.Size([25-1, 2, 30522])
+        #     mylogger.debug("prob: {}".format(str(prob.shape)))
+        #     return prob
+        # else:
+        #     pad_id = self.tokenizer.convert_tokens_to_ids('[PAD]')
+        #     cls_id = self.tokenizer.convert_tokens_to_ids('[CLS]')
+        #     sep_id = self.tokenizer.convert_tokens_to_ids('[SEP]')
+        #     current_word = torch.ones([batch_size, 1]) * cls_id  # [B, 1]
+        #
+        #     words = []
+        #     cls_count = 0
+        #     for i in range(self.max_out_len - 1):
+        #         # generate mask
+        #         cap_padding_mask = (current_word == pad_id).transpose(1, 0).to(self.device)
+        #         mylogger.debug("cap_padding_mask: {}".format(str(cap_padding_mask.shape)))  # cap_padding_mask: torch.Size([2, 1])
+        #
+        #         # embedding current word
+        #         current_word = current_word.to(torch.int).to(self.device)
+        #         mylogger.debug("current_word: {}".format(str(current_word.shape)))
+        #         embed_current_word = self.embedding(input_ids=current_word).last_hidden_state.to(self.device)
+        #         mylogger.debug("embed_current_word: {}".format(str(embed_current_word.shape)))  # embed_current_word: torch.Size([2, 1, 768])
+        #
+        #         # dec_caption: (1, N, E)
+        #         dec_caption = self.decoder(tgt=embed_current_word, memory=enc_video,
+        #                                    tgt_key_padding_mask=cap_padding_mask)
+        #         mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([2, 1, 768])
+        #
+        #         prob = self.out_linear(self.out_drop(dec_caption))
+        #         mylogger.debug("prob: {}".format(str(prob.shape)))  # prob torch.Size([1, 2, 30522])
+        #         _, current_word = torch.max(prob, dim=2)
+        #         mylogger.debug("current_word: {}".format(str(current_word.shape)))  # current_word: torch.Size([2, 1])
+        #         words.append(current_word)
+        #
+        #         # break if all captions reach [SEP]
+        #         cls_count += torch.sum((current_word == sep_id).to(dtype=torch.int))
+        #         if cls_count >= batch_size:
+        #             break
+        #     words = torch.stack(words).transpose(0, 1).squeeze_()  # words: torch.Size([2, max_len, 1])
+        #     mylogger.debug("words: {}".format(str(words.shape)))
+        #     tokens = self.tokenizer.convert_ids_to_tokens(words)
+        #     result_strings = self.tokenizer.convert_tokens_to_string(tokens)
+        #     return result_strings
 
 
 if __name__ == '__main__':
@@ -874,9 +904,3 @@ if __name__ == '__main__':
                                    r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
     train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=2)
     a = next(iter(train_loader))  # B,T,H,W,C
-    vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1, patch_norm=True,
-                                             window_size=(8, 7, 7), depths=(2, 2, 6, 2), embed_dim=96,
-                                             checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
-                                             bert_type="bert-base-uncased", pretrained2d=False)  # .cuda()
-    # y = vcst_model(a[0].float(), mode='test')
-    y = vcst_model(a[0].float(), a[1], mode='train')
