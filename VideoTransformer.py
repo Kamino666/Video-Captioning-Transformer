@@ -8,7 +8,6 @@ from transformers import BertModel, AutoTokenizer
 
 import math
 import pathlib as plb
-import random
 import json
 from tqdm import tqdm
 import numpy as np
@@ -32,10 +31,8 @@ class Opt:
 
 
 class MSRVTT(Dataset):
-    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
-                 random_seed: int = 1234, mode: str = "train"):
+    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer, mode: str = "train"):
         super(MSRVTT, self).__init__()
-        random.seed(random_seed)
         self.tokenizer = tokenizer
         # load video list
         video_feat_dir = plb.Path(video_feat_dir)
@@ -61,7 +58,7 @@ class MSRVTT(Dataset):
         vid = video_path.stem
         v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float).transpose(0, 1)
         if self.mode == "train" or "val" or "validate":
-            caption = random.choice(self.video2caption[vid])
+            caption = np.random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
             return v_feat, caption  # caption["input_ids"], caption["attention_mask"]
         return v_feat
@@ -71,10 +68,8 @@ class MSRVTT(Dataset):
 
 
 class VATEX(Dataset):
-    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
-                 random_seed: int = 1234, mode: str = "train"):
+    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer, mode: str = "train"):
         super(VATEX, self).__init__()
-        random.seed(random_seed)
         self.tokenizer = tokenizer
         # load video list
         video_feat_list = list(plb.Path(video_feat_dir).glob("*.npy"))
@@ -98,7 +93,7 @@ class VATEX(Dataset):
         video_path = self.video2path[vid]
         v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float).squeeze()
         if self.mode == "train" or "val" or "validate":
-            caption = random.choice(self.video2caption[vid])
+            caption = np.random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
             return v_feat, caption
         return v_feat
@@ -191,7 +186,8 @@ class VideoTransformer(nn.Module):
         if use_bert is True:
             self.tgt_to_emb = BertModel.from_pretrained(bert_type)
         else:
-            self.tgt_to_emb = nn.Embedding(self.tokenizer.vocab_size, emb_size, padding_idx=opt.pad_id)
+            pad_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
+            self.tgt_to_emb = nn.Embedding(self.tokenizer.vocab_size, emb_size, padding_idx=pad_id)
         self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
 
     def forward(self,
@@ -239,6 +235,7 @@ def train_epoch(model, optimizer, train_dataloader):
         src = src.to(device)
         tgt = tgt.to(device)
         tgt_padding_mask = tgt_padding_mask.to(device)[:, :-1]
+        src_padding_mask = src_padding_mask.to(device)
 
         tgt_input = tgt[:, :-1]  # N T-1
         tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1])
@@ -267,6 +264,7 @@ def evaluate(model, val_dataloader):
         src = src.to(device)
         tgt = tgt.to(device)
         tgt_padding_mask = tgt_padding_mask.to(device)[:, :-1]
+        src_padding_mask = src_padding_mask.to(device)
 
         tgt_input = tgt[:, :-1]  # N T-1
         tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1])
