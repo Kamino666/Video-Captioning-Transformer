@@ -17,11 +17,11 @@ device = torch.device("cuda")
 
 
 class Opt:
-    batch_size = 64
+    batch_size = 32
     bert_type = "bert-base-uncased"
-    enc_layer_num = 8
-    dec_layer_num = 8
-    head_num = 8
+    enc_layer_num = 1
+    dec_layer_num = 1
+    head_num = 4
     feat_size = 1024
     emb_dim = 768
     hid_dim = 1024
@@ -178,6 +178,7 @@ class VideoTransformer(nn.Module):
                                        num_decoder_layers=num_decoder_layers,
                                        dim_feedforward=dim_feedforward,
                                        dropout=dropout,
+                                       activation="gelu",
                                        batch_first=True)
         self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
         self.generator = nn.Linear(emb_size, self.tokenizer.vocab_size)
