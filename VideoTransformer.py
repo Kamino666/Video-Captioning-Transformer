@@ -69,6 +69,46 @@ class MSRVTT(Dataset):
         return len(self.video_feat_list)
 
 
+class VATEX(Dataset):
+    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
+                 random_seed: int = 1234, mode: str = "train"):
+        super(VATEX, self).__init__()
+        random.seed(random_seed)
+        self.tokenizer = tokenizer
+        # load video list
+        video_feat_list = list(plb.Path(video_feat_dir).glob("*.npy"))
+        self.video2path = {i.stem[:11]: str(i) for i in video_feat_list}
+        self.mode = mode
+
+        # load caption
+        if mode == "train" or "validate":
+            self.video_ids = []
+            self.video2caption = {}
+            with open(annotation_file, encoding='utf-8') as f:
+                annotation = json.load(f)
+            for cap in tqdm(annotation, desc="Loading annotations"):
+                self.video_ids.append(cap["videoID"])
+                if cap["videoID"] not in self.video2caption:
+                    self.video2caption[cap["videoID"]] = [cap["enCap"]]
+                else:
+                    self.video2caption[cap["videoID"]].append(cap["enCap"])
+        elif mode == "test":
+            self.video_ids = [i.stem[:11] for i in video_feat_list]
+
+    def __getitem__(self, index):
+        vid = self.video_ids[index]
+        video_path = self.video2path[vid]
+        v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float).squeeze()
+        if self.mode == "train" or "val" or "validate":
+            caption = random.choice(self.video2caption[vid])
+            caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+            return v_feat, caption
+        return v_feat
+
+    def __len__(self):
+        return len(self.video_ids)
+
+
 def collate_fn(data):
     """
     :param data:
