@@ -23,6 +23,7 @@ class Opt:
     enc_layer_num = 8
     dec_layer_num = 8
     head_num = 8
+    feat_size = 1024
     emb_dim = 768
     hid_dim = 1024
     dropout = 0.1
@@ -162,11 +163,12 @@ class PositionalEncoding(nn.Module):
 
 
 # Seq2Seq Network
-# [N,T,E] and [N,S,E] -> [N, len, vocab_size]
+# [N,T,C] and [N,S,E] -> [N, len, vocab_size]
 class VideoTransformer(nn.Module):
     def __init__(self,
                  num_encoder_layers: int,
                  num_decoder_layers: int,
+                 feat_size: int,
                  emb_size: int,
                  nhead: int,
                  bert_type: str,
@@ -182,7 +184,8 @@ class VideoTransformer(nn.Module):
                                        batch_first=True)
         self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
         self.generator = nn.Linear(emb_size, self.tokenizer.vocab_size)
-        self.tgt_tok_emb = BertModel.from_pretrained(bert_type)
+        self.src_to_emb = nn.Linear(feat_size, emb_size)
+        self.tgt_to_emb = BertModel.from_pretrained(bert_type)
         self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
 
     def forward(self,
@@ -193,20 +196,19 @@ class VideoTransformer(nn.Module):
                 src_padding_mask: Tensor,
                 tgt_padding_mask: Tensor,
                 memory_key_padding_mask: Tensor = None):
-        src_emb = self.positional_encoding(src)  # src: torch.Size([16, 768, 20])
-        tgt_emb = self.positional_encoding(self.tgt_tok_emb(tgt).last_hidden_state.to(device))
+        src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
+        tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt).last_hidden_state.to(device))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
                                 src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
         return self.generator(outs)
 
     def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(self.positional_encoding(src), src_mask)
+        return self.transformer.encoder(self.positional_encoding(self.src_to_emb(src)), src_mask)
 
     def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
         return self.transformer.decoder(
-            self.positional_encoding(self.tgt_tok_emb(tgt)),
-            memory,
-            tgt_mask)
+            self.positional_encoding(self.tgt_to_emb(tgt)), memory, tgt_mask
+        )
 
 
 def generate_square_subsequent_mask(sz):
@@ -270,6 +272,7 @@ if __name__ == "__main__":
     opt = Opt()
     transformer = VideoTransformer(num_encoder_layers=opt.enc_layer_num,
                                    num_decoder_layers=opt.dec_layer_num,
+                                   feat_size=opt.feat_size,
                                    emb_size=opt.emb_dim,
                                    nhead=opt.head_num,
                                    bert_type=opt.bert_type,
