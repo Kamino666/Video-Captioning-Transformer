@@ -18,13 +18,13 @@ device = torch.device("cuda")
 
 
 class Opt:
-    batch_size = 16
+    batch_size = 64
     bert_type = "bert-base-uncased"
-    enc_layer_num = 3
-    dec_layer_num = 3
+    enc_layer_num = 8
+    dec_layer_num = 8
     head_num = 8
     emb_dim = 768
-    hid_dim = 768
+    hid_dim = 1024
     dropout = 0.1
     lr = 1e-4
     epoch_num = 50
@@ -42,7 +42,7 @@ class MSRVTT(Dataset):
         self.mode = mode
 
         # load caption
-        if mode == "train" or "val" or "validate":
+        if mode == "train" or "validate":
             self.video2caption = {}
             with open(annotation_file, encoding='utf-8') as f:
                 annotation = json.load(f)
@@ -58,10 +58,10 @@ class MSRVTT(Dataset):
     def __getitem__(self, index):
         video_path = self.video_feat_list[index]
         vid = video_path.stem
-        v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float)
+        v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float).transpose(0, 1)
         if self.mode == "train" or "val" or "validate":
             caption = random.choice(self.video2caption[vid])
-            caption = self.tokenizer.encode(caption, return_tensors="pt")
+            caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
             return v_feat, caption #caption["input_ids"], caption["attention_mask"]
         return v_feat
 
@@ -82,7 +82,7 @@ def collate_fn(data):
         text_len = [len(i) for i in text_data]
         max_len = max(text_len)
 
-        text_ts = torch.ones([batch_size, max_len]) * opt.pad_id
+        text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * opt.pad_id
         for i in range(batch_size):
             text_ts[i, :text_len[i]] = text_data[i]
 
@@ -104,7 +104,7 @@ class PositionalEncoding(nn.Module):
         pos_embedding = torch.zeros((maxlen, emb_size))
         pos_embedding[:, 0::2] = torch.sin(pos * den)
         pos_embedding[:, 1::2] = torch.cos(pos * den)
-        pos_embedding = pos_embedding.unsqueeze(-2)
+        #pos_embedding = pos_embedding.unsqueeze(-2)
 
         self.dropout = nn.Dropout(dropout)
         self.register_buffer('pos_embedding', pos_embedding)
@@ -133,21 +133,21 @@ class VideoTransformer(nn.Module):
                                        dim_feedforward=dim_feedforward,
                                        dropout=dropout,
                                        batch_first=True)
-        self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
+        self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
         self.generator = nn.Linear(emb_size, self.tokenizer.vocab_size)
         self.tgt_tok_emb = BertModel.from_pretrained(bert_type)
         self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
 
     def forward(self,
                 src: Tensor,
-                trg: Tensor,
+                tgt: Tensor,
                 src_mask: Tensor,
                 tgt_mask: Tensor,
                 src_padding_mask: Tensor,
                 tgt_padding_mask: Tensor,
-                memory_key_padding_mask: Tensor):
-        src_emb = self.positional_encoding(self.src_tok_emb(src))
-        tgt_emb = self.positional_encoding(self.tgt_tok_emb(trg))
+                memory_key_padding_mask: Tensor = None):
+        src_emb = self.positional_encoding(src)  # src: torch.Size([16, 768, 20])
+        tgt_emb = self.positional_encoding(self.tgt_tok_emb(tgt).last_hidden_state.to(device))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
                                 src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
         return self.generator(outs)
@@ -168,21 +168,17 @@ def generate_square_subsequent_mask(sz):
     return mask
 
 
-def train_epoch(model, optimizer, opt: Opt, tokenizer: AutoTokenizer):
+def train_epoch(model, optimizer, train_dataloader):
     model.train()
     losses = 0
-    train_iter = MSRVTT(r"./data/msrvtt-train-feats",
-                        r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
-                        tokenizer=tokenizer)
-    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
 
     for src, tgt, tgt_padding_mask in tqdm(train_dataloader):
         src = src.to(device)
         tgt = tgt.to(device)
-        tgt_padding_mask = tgt_padding_mask.to(device)
+        tgt_padding_mask = tgt_padding_mask.to(device)[:, :-1]
 
         tgt_input = tgt[:, :-1]  # N T-1
-        tgt_mask = generate_square_subsequent_mask(tgt.shape[1])
+        tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1])
 
         logits = model(src, tgt_input,
                        tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,
@@ -200,28 +196,23 @@ def train_epoch(model, optimizer, opt: Opt, tokenizer: AutoTokenizer):
     return losses / len(train_dataloader)
 
 
-def evaluate(model, opt: Opt, tokenizer: AutoTokenizer):
+def evaluate(model, val_dataloader):
     model.eval()
     losses = 0
-
-    val_iter = MSRVTT(r"./data/msrvtt-validate-feats",
-                      r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
-                      tokenizer=tokenizer, mode="val")
-    val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
     for src, tgt, tgt_padding_mask in val_dataloader:
         src = src.to(device)
         tgt = tgt.to(device)
-        tgt_padding_mask = tgt_padding_mask.to(device)
+        tgt_padding_mask = tgt_padding_mask.to(device)[:, :-1]
 
         tgt_input = tgt[:, :-1]  # N T-1
-        tgt_mask = generate_square_subsequent_mask(tgt.shape[1])
-        with torch.no_grad:
+        tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1])
+        with torch.no_grad():
             logits = model(src, tgt_input,
                            tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,
                            src_mask=None, src_padding_mask=None)  # N T-1 vocab_szie
 
-            tgt_out = tgt[1:, :]  # N T-1
+            tgt_out = tgt[:, 1:]  # N T-1
             loss = loss_fn(logits.reshape(-1, logits.shape[-1]), tgt_out.reshape(-1))
         losses += loss.item()
 
@@ -237,7 +228,7 @@ if __name__ == "__main__":
                                    bert_type=opt.bert_type,
                                    dropout=opt.dropout,
                                    dim_feedforward=opt.hid_dim)
-    tokenizer = AutoTokenizer.from_pretrained(opt.bert_type)
+    tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
     opt.pad_id = pad_id
 
@@ -248,11 +239,20 @@ if __name__ == "__main__":
     transformer = transformer.to(device)
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.Adam(transformer.parameters(), lr=opt.lr)
+    
+    train_iter = MSRVTT(r"./data/msrvtt-train-feats",
+                        r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
+                        tokenizer=tokenizer)
+    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
+    val_iter = MSRVTT(r"./data/msrvtt-validate-feats",
+                      r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
+                      tokenizer=tokenizer, mode="validate")
+    val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
     for epoch in range(1, opt.epoch_num + 1):
         start_time = timer()
-        train_loss = train_epoch(transformer, optimizer, opt, tokenizer)
+        train_loss = train_epoch(transformer, optimizer, train_dataloader)
         end_time = timer()
-        val_loss = evaluate(transformer, opt, tokenizer)
+        val_loss = evaluate(transformer, val_dataloader)
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
               f" Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
