@@ -115,7 +115,7 @@ def collate_fn(data):
     batch_size = len(data)
 
     # video feature
-    feat_dim = data[0, 0].shape[1]
+    feat_dim = data[0][0].shape[1]
     feat_data = [i[0] for i in data]
     feat_len = [len(i) for i in feat_data]
     max_len = max(feat_len)
@@ -290,12 +290,12 @@ if __name__ == "__main__":
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.Adam(transformer.parameters(), lr=opt.lr)
 
-    train_iter = VATEX(r"./data/msrvtt-train-feats",
-                       r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
+    train_iter = VATEX(r"./data/val",
+                       r"./data/vatex_training_v1.0.json",
                        tokenizer=tokenizer)
     train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_iter = VATEX(r"./data/msrvtt-validate-feats",
-                     r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
+    val_iter = VATEX(r"./data/val",
+                     r"./data/vatex_validation_v1.0.json",
                      tokenizer=tokenizer, mode="validate")
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
