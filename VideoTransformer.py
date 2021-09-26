@@ -171,9 +171,11 @@ class VideoTransformer(nn.Module):
                  feat_size: int,
                  emb_size: int,
                  nhead: int,
-                 bert_type: str,
+                 bert_type: str = "bert-base-uncased",
+                 use_bert: bool = True,
                  dim_feedforward: int = 512,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1,
+                 ):
         super(VideoTransformer, self).__init__()
         self.transformer = Transformer(d_model=emb_size,
                                        nhead=nhead,
@@ -185,7 +187,11 @@ class VideoTransformer(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
         self.generator = nn.Linear(emb_size, self.tokenizer.vocab_size)
         self.src_to_emb = nn.Linear(feat_size, emb_size)
-        self.tgt_to_emb = BertModel.from_pretrained(bert_type)
+        self.use_bert = use_bert
+        if use_bert is True:
+            self.tgt_to_emb = BertModel.from_pretrained(bert_type)
+        else:
+            self.tgt_to_emb = nn.Embedding(self.tokenizer.vocab_size, emb_size, padding_idx=opt.pad_id)
         self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
 
     def forward(self,
@@ -197,7 +203,10 @@ class VideoTransformer(nn.Module):
                 tgt_padding_mask: Tensor,
                 memory_key_padding_mask: Tensor = None):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
-        tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt).last_hidden_state.to(device))
+        if self.use_bert is True:
+            tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt).last_hidden_state.to(device))
+        else:
+            tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
                                 src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
         return self.generator(outs)
@@ -206,9 +215,14 @@ class VideoTransformer(nn.Module):
         return self.transformer.encoder(self.positional_encoding(self.src_to_emb(src)), src_mask)
 
     def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(
-            self.positional_encoding(self.tgt_to_emb(tgt)), memory, tgt_mask
-        )
+        if self.use_bert is True:
+            return self.transformer.decoder(
+                self.positional_encoding(self.tgt_to_emb(tgt).last_hidden_state.to(device)), memory, tgt_mask
+            )
+        else:
+            return self.transformer.decoder(
+                self.positional_encoding(self.tgt_to_emb(tgt)), memory, tgt_mask
+            )
 
 
 def generate_square_subsequent_mask(sz):
@@ -288,7 +302,7 @@ if __name__ == "__main__":
 
     transformer = transformer.to(device)
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
-    optimizer = torch.optim.Adam(transformer.parameters(), lr=opt.lr)
+    optimizer = torch.optim.AdamW(transformer.parameters(), lr=opt.lr)
 
     train_iter = VATEX(r"./data/val",
                        r"./data/vatex_training_v1.0.json",
