@@ -62,7 +62,7 @@ class MSRVTT(Dataset):
         if self.mode == "train" or "val" or "validate":
             caption = random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
-            return v_feat, caption #caption["input_ids"], caption["attention_mask"]
+            return v_feat, caption  # caption["input_ids"], caption["attention_mask"]
         return v_feat
 
     def __len__(self):
@@ -87,11 +87,8 @@ class VATEX(Dataset):
             with open(annotation_file, encoding='utf-8') as f:
                 annotation = json.load(f)
             for cap in tqdm(annotation, desc="Loading annotations"):
-                self.video_ids.append(cap["videoID"])
-                if cap["videoID"] not in self.video2caption:
-                    self.video2caption[cap["videoID"]] = [cap["enCap"]]
-                else:
-                    self.video2caption[cap["videoID"]].append(cap["enCap"])
+                self.video_ids.append(cap["videoID"][:11])
+                self.video2caption[cap["videoID"][:11]] = cap["enCap"]
         elif mode == "test":
             self.video_ids = [i.stem[:11] for i in video_feat_list]
 
@@ -114,23 +111,33 @@ def collate_fn(data):
     :param data:
     :return tuple(N T E, N T):
     """
-    if type(data[0]) is tuple:
-        batch_size = len(data)
-        feat_ts = torch.stack([i[0] for i in data])
+    batch_size = len(data)
 
+    # video feature
+    feat_dim = data[0, 0].shape[1]
+    feat_data = [i[0] for i in data]
+    feat_len = [len(i) for i in feat_data]
+    max_len = max(feat_len)
+    feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
+    feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
+    for i in range(batch_size):
+        feat_ts[i, :feat_len[i]] = feat_data[i]
+        feat_mask_ts[i, :feat_len[i]] = 0
+    feat_mask_ts = (feat_mask_ts == 1)
+
+    # if train or val
+    if type(data[0]) is tuple:  # if train or val
+        # text
         text_data = [i[1] for i in data]
         text_len = [len(i) for i in text_data]
         max_len = max(text_len)
-
         text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * opt.pad_id
         for i in range(batch_size):
             text_ts[i, :text_len[i]] = text_data[i]
-
-        mask_ts = (text_ts == opt.pad_id)
-
-        return feat_ts, text_ts, mask_ts
+        text_mask_ts = (text_ts == opt.pad_id)
+        return feat_ts, text_ts, feat_mask_ts, text_mask_ts
     else:
-        return torch.stack(data)
+        return feat_ts, feat_mask_ts
 
 
 class PositionalEncoding(nn.Module):
@@ -144,7 +151,7 @@ class PositionalEncoding(nn.Module):
         pos_embedding = torch.zeros((maxlen, emb_size))
         pos_embedding[:, 0::2] = torch.sin(pos * den)
         pos_embedding[:, 1::2] = torch.cos(pos * den)
-        #pos_embedding = pos_embedding.unsqueeze(-2)
+        # pos_embedding = pos_embedding.unsqueeze(-2)
 
         self.dropout = nn.Dropout(dropout)
         self.register_buffer('pos_embedding', pos_embedding)
@@ -212,7 +219,7 @@ def train_epoch(model, optimizer, train_dataloader):
     model.train()
     losses = 0
 
-    for src, tgt, tgt_padding_mask in tqdm(train_dataloader):
+    for src, tgt, src_padding_mask, tgt_padding_mask in tqdm(train_dataloader):
         src = src.to(device)
         tgt = tgt.to(device)
         tgt_padding_mask = tgt_padding_mask.to(device)[:, :-1]
@@ -222,7 +229,7 @@ def train_epoch(model, optimizer, train_dataloader):
 
         logits = model(src, tgt_input,
                        tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,
-                       src_mask=None, src_padding_mask=None)  # N T-1 vocab_szie
+                       src_mask=None, src_padding_mask=src_padding_mask)  # N T-1 vocab_szie
 
         optimizer.zero_grad()
 
@@ -240,7 +247,7 @@ def evaluate(model, val_dataloader):
     model.eval()
     losses = 0
 
-    for src, tgt, tgt_padding_mask in val_dataloader:
+    for src, tgt, src_padding_mask, tgt_padding_mask in val_dataloader:
         src = src.to(device)
         tgt = tgt.to(device)
         tgt_padding_mask = tgt_padding_mask.to(device)[:, :-1]
@@ -250,7 +257,7 @@ def evaluate(model, val_dataloader):
         with torch.no_grad():
             logits = model(src, tgt_input,
                            tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,
-                           src_mask=None, src_padding_mask=None)  # N T-1 vocab_szie
+                           src_mask=None, src_padding_mask=src_padding_mask)  # N T-1 vocab_szie
 
             tgt_out = tgt[:, 1:]  # N T-1
             loss = loss_fn(logits.reshape(-1, logits.shape[-1]), tgt_out.reshape(-1))
@@ -279,14 +286,14 @@ if __name__ == "__main__":
     transformer = transformer.to(device)
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.Adam(transformer.parameters(), lr=opt.lr)
-    
-    train_iter = MSRVTT(r"./data/msrvtt-train-feats",
-                        r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
-                        tokenizer=tokenizer)
+
+    train_iter = VATEX(r"./data/msrvtt-train-feats",
+                       r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
+                       tokenizer=tokenizer)
     train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_iter = MSRVTT(r"./data/msrvtt-validate-feats",
-                      r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
-                      tokenizer=tokenizer, mode="validate")
+    val_iter = VATEX(r"./data/msrvtt-validate-feats",
+                     r"./data/MSRVTT-annotations/train_val_videodatainfo.json",
+                     tokenizer=tokenizer, mode="validate")
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
     for epoch in range(1, opt.epoch_num + 1):
