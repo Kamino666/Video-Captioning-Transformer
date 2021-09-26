@@ -61,8 +61,8 @@ class MSRVTT(Dataset):
         v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float)
         if self.mode == "train" or "val" or "validate":
             caption = random.choice(self.video2caption[vid])
-            caption = self.tokenizer(caption, padding=True, return_tensors="pt")
-            return v_feat, caption["input_ids"], caption["attention_mask"]
+            caption = self.tokenizer.encode(caption, return_tensors="pt")
+            return v_feat, caption #caption["input_ids"], caption["attention_mask"]
         return v_feat
 
     def __len__(self):
@@ -75,10 +75,20 @@ def collate_fn(data):
     :return tuple(N T E, N T):
     """
     if type(data[0]) is tuple:
-        feat_data = torch.stack([i[0] for i in data])
-        text_data = torch.stack([i[1] for i in data])
-        mask_data = torch.stack([i[2] for i in data]).to(torch.bool)
-        return feat_data, text_data, mask_data
+        batch_size = len(data)
+        feat_ts = torch.stack([i[0] for i in data])
+
+        text_data = [i[1] for i in data]
+        text_len = [len(i) for i in text_data]
+        max_len = max(text_len)
+
+        text_ts = torch.ones([batch_size, max_len]) * opt.pad_id
+        for i in range(batch_size):
+            text_ts[i, :text_len[i]] = text_data[i]
+
+        mask_ts = (text_ts == opt.pad_id)
+
+        return feat_ts, text_ts, mask_ts
     else:
         return torch.stack(data)
 
@@ -149,8 +159,7 @@ class VideoTransformer(nn.Module):
         return self.transformer.decoder(
             self.positional_encoding(self.tgt_tok_emb(tgt)),
             memory,
-            tgt_mask
-        )
+            tgt_mask)
 
 
 def generate_square_subsequent_mask(sz):
@@ -230,6 +239,7 @@ if __name__ == "__main__":
                                    dim_feedforward=opt.hid_dim)
     tokenizer = AutoTokenizer.from_pretrained(opt.bert_type)
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
+    opt.pad_id = pad_id
 
     for p in transformer.parameters():
         if p.dim() > 1:
