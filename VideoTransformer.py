@@ -19,7 +19,11 @@ device = torch.device("cuda")
 
 
 class Opt:
+    # train
     batch_size = 32
+    lr = 1e-4
+    max_len = 30
+    # model
     bert_type = "bert-base-uncased"
     enc_layer_num = 1
     dec_layer_num = 1
@@ -28,7 +32,6 @@ class Opt:
     emb_dim = 768
     hid_dim = 1024
     dropout = 0.1
-    lr = 1e-4
     epoch_num = 50
     # save & load
     save_freq = 5
@@ -286,6 +289,37 @@ def evaluate(model, val_dataloader):
     return losses / len(val_dataloader)
 
 
+# function to generate output sequence using greedy algorithm
+def greedy_decode(model, src, max_len, start_symbol, end_symbol):
+    src = src.to(device)  # 1, T
+    memory = model.encode(src)  # 1, T, E
+
+    ys = torch.ones(1, 1).fill_(start_symbol).type(torch.long).to(device)  # 1, 1
+    for i in range(max_len-1):
+        memory = memory.to(device)
+        tgt_mask = (generate_square_subsequent_mask(ys.shape[1]).type(torch.bool)).to(device)  # t, t
+        out = model.decode(ys, memory, tgt_mask)
+        prob = model.generator(out[:, -1]).squeeze()  # vocab_size
+        _, next_word = torch.max(prob)
+        next_word = next_word.item()
+
+        ys = torch.cat([ys, torch.ones(1, 1).type_as(src.data).fill_(next_word)], dim=1)  # 1, t
+        if next_word == end_symbol:
+            break
+    return ys.squeeze().item()
+
+
+def translate(model, test_dataset, max_len, start_symbol, end_symbol, tokenizer):
+    src, tgt = test_dataset[0]
+    src = src.to(device)
+    # inference
+    result = greedy_decode(model, src, max_len, start_symbol, end_symbol)  # list T
+    # to text
+    result_tokens = tokenizer.convert_ids_to_tokens(result)
+    result_text = tokenizer.convert_tokens_to_string(result_tokens)
+    return result_text, tgt
+
+
 if __name__ == "__main__":
     opt = Opt()
     transformer = VideoTransformer(num_encoder_layers=opt.enc_layer_num,
@@ -308,6 +342,8 @@ if __name__ == "__main__":
     transformer = transformer.to(device)
     tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
+    start_id = tokenizer.convert_tokens_to_ids("[CLS]")
+    end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = pad_id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.AdamW(transformer.parameters(), lr=opt.lr)
@@ -327,11 +363,14 @@ if __name__ == "__main__":
         train_loss = train_epoch(transformer, optimizer, train_dataloader)
         end_time = timer()
         val_loss = evaluate(transformer, val_dataloader)
+        result_text, result_tgt = translate(transformer, val_iter, opt.max_len, start_id, end_id, tokenizer)
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
               f" Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
+        print(f"tgt:{result_tgt} \nresult:{result_text}")
         writer.add_scalar("train_loss", train_loss, step=epoch)
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
+        writer.add_text(result_tgt, result_text, step=epoch)
         if epoch % opt.save_freq == 0:
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
