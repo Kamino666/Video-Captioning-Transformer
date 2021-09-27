@@ -33,6 +33,7 @@ class Opt:
     hid_dim = 1024
     dropout = 0.1
     epoch_num = 300
+    use_bert = False
     # save & load
     save_freq = 10
     load_model = None
@@ -295,7 +296,7 @@ def greedy_decode(model, src, max_len, start_symbol, end_symbol):
     memory = model.encode(src).to(device)  # 1, T, E
 
     ys = torch.ones(1, 1).fill_(start_symbol).type(torch.long).to(device)  # 1, 1
-    for i in range(max_len-1):
+    for i in range(max_len - 1):
         tgt_mask = (generate_square_subsequent_mask(ys.shape[1]).type(torch.bool)).to(device)  # t, t
         out = model.decode(ys, memory, tgt_mask)
         prob = model.generator(out[:, -1])  # vocab_size
@@ -330,6 +331,7 @@ if __name__ == "__main__":
                                    nhead=opt.head_num,
                                    bert_type=opt.bert_type,
                                    dropout=opt.dropout,
+                                   use_bert=opt.use_bert,
                                    dim_feedforward=opt.hid_dim)
     if opt.load_model is None:
         st_epoch = 0
