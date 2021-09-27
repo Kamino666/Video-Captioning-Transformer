@@ -25,16 +25,16 @@ class Opt:
     max_len = 30
     # model
     bert_type = "bert-base-uncased"
-    enc_layer_num = 1
-    dec_layer_num = 1
+    enc_layer_num = 2
+    dec_layer_num = 2
     head_num = 4
     feat_size = 1024
     emb_dim = 768
     hid_dim = 1024
     dropout = 0.1
-    epoch_num = 50
+    epoch_num = 300
     # save & load
-    save_freq = 5
+    save_freq = 10
     load_model = None
 
 
@@ -216,8 +216,8 @@ class VideoTransformer(nn.Module):
                                 src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
         return self.generator(outs)
 
-    def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(self.positional_encoding(self.src_to_emb(src)), src_mask)
+    def encode(self, src: Tensor):
+        return self.transformer.encoder(self.positional_encoding(self.src_to_emb(src)))
 
     def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
         if self.use_bert is True:
@@ -291,22 +291,21 @@ def evaluate(model, val_dataloader):
 
 # function to generate output sequence using greedy algorithm
 def greedy_decode(model, src, max_len, start_symbol, end_symbol):
-    src = src.to(device)  # 1, T
-    memory = model.encode(src)  # 1, T, E
+    src = src.to(device).unsqueeze(0)  # 1, T
+    memory = model.encode(src).to(device)  # 1, T, E
 
     ys = torch.ones(1, 1).fill_(start_symbol).type(torch.long).to(device)  # 1, 1
     for i in range(max_len-1):
-        memory = memory.to(device)
         tgt_mask = (generate_square_subsequent_mask(ys.shape[1]).type(torch.bool)).to(device)  # t, t
         out = model.decode(ys, memory, tgt_mask)
-        prob = model.generator(out[:, -1]).squeeze()  # vocab_size
-        _, next_word = torch.max(prob)
+        prob = model.generator(out[:, -1])  # vocab_size
+        _, next_word = torch.max(prob, dim=1)
         next_word = next_word.item()
 
-        ys = torch.cat([ys, torch.ones(1, 1).type_as(src.data).fill_(next_word)], dim=1)  # 1, t
+        ys = torch.cat([ys, torch.ones(1, 1).type(torch.long).fill_(next_word).to(device)], dim=1)  # 1, t
         if next_word == end_symbol:
             break
-    return ys.squeeze().item()
+    return ys.squeeze().tolist()
 
 
 def translate(model, test_dataset, max_len, start_symbol, end_symbol, tokenizer):
@@ -317,7 +316,9 @@ def translate(model, test_dataset, max_len, start_symbol, end_symbol, tokenizer)
     # to text
     result_tokens = tokenizer.convert_ids_to_tokens(result)
     result_text = tokenizer.convert_tokens_to_string(result_tokens)
-    return result_text, tgt
+    result_tgt = tokenizer.convert_ids_to_tokens(tgt)
+    result_tgt = tokenizer.convert_tokens_to_string(result_tgt)
+    return result_text, result_tgt
 
 
 if __name__ == "__main__":
@@ -346,7 +347,7 @@ if __name__ == "__main__":
     end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = pad_id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
-    optimizer = torch.optim.AdamW(transformer.parameters(), lr=opt.lr)
+    optimizer = torch.optim.Adam(transformer.parameters(), lr=opt.lr)
     writer = LogWriter("./log")
 
     train_iter = VATEX(r"./data/val",
@@ -370,7 +371,7 @@ if __name__ == "__main__":
         writer.add_scalar("train_loss", train_loss, step=epoch)
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
-        writer.add_text(result_tgt, result_text, step=epoch)
+        writer.add_text("text", result_text, step=epoch)
         if epoch % opt.save_freq == 0:
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
