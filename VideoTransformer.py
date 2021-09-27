@@ -5,7 +5,7 @@ from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
 
 from transformers import BertModel, AutoTokenizer
-# from visualdl import LogWriter
+from visualdl import LogWriter
 
 import math
 import pathlib as plb
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     opt.pad_id = pad_id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.AdamW(transformer.parameters(), lr=opt.lr)
-    # writer = LogWriter("./log")
+    writer = LogWriter("./log")
 
     train_iter = VATEX(r"./data/val",
                        r"./data/vatex_training_v1.0.json",
@@ -329,6 +329,9 @@ if __name__ == "__main__":
         val_loss = evaluate(transformer, val_dataloader)
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
               f" Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
+        writer.add_scalar("train_loss", train_loss, step=epoch)
+        writer.add_scalar("val_loss", val_loss, step=epoch)
+        writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
         if epoch % opt.save_freq == 0:
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
