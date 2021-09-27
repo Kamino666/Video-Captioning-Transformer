@@ -5,6 +5,7 @@ from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
 
 from transformers import BertModel, AutoTokenizer
+# from visualdl import LogWriter
 
 import math
 import pathlib as plb
@@ -12,6 +13,7 @@ import json
 from tqdm import tqdm
 import numpy as np
 from timeit import default_timer as timer
+import re
 
 device = torch.device("cuda")
 
@@ -28,6 +30,9 @@ class Opt:
     dropout = 0.1
     lr = 1e-4
     epoch_num = 50
+    # save & load
+    save_freq = 5
+    load_model = None
 
 
 class MSRVTT(Dataset):
@@ -291,17 +296,22 @@ if __name__ == "__main__":
                                    bert_type=opt.bert_type,
                                    dropout=opt.dropout,
                                    dim_feedforward=opt.hid_dim)
+    if opt.load_model is None:
+        st_epoch = 0
+        for p in transformer.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+    else:
+        transformer.load_state_dict(torch.load(opt.load_model))
+        st_epoch = int(re.findall("epoch([0-9]+)", opt.load_model)[0])
+
+    transformer = transformer.to(device)
     tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
     opt.pad_id = pad_id
-
-    for p in transformer.parameters():
-        if p.dim() > 1:
-            nn.init.xavier_uniform_(p)
-
-    transformer = transformer.to(device)
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.AdamW(transformer.parameters(), lr=opt.lr)
+    # writer = LogWriter("./log")
 
     train_iter = VATEX(r"./data/val",
                        r"./data/vatex_training_v1.0.json",
@@ -312,10 +322,14 @@ if __name__ == "__main__":
                      tokenizer=tokenizer, mode="validate")
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
-    for epoch in range(1, opt.epoch_num + 1):
+    for epoch in range(1 + st_epoch, opt.epoch_num + 1 + st_epoch):
         start_time = timer()
         train_loss = train_epoch(transformer, optimizer, train_dataloader)
         end_time = timer()
         val_loss = evaluate(transformer, val_dataloader)
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
               f" Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
+        if epoch % opt.save_freq == 0:
+            print("Saving checkpoint...")
+            torch.save(transformer.state_dict(),
+                       f"./checkpoint/Bert_b32_vatexI3D_enc1_dec1_head4_emb768_hid1024_epoch{epoch}.pth")
