@@ -85,8 +85,14 @@ def greedy_decode_dataset(model, test_loader):
                     end_flag[k] = 1
             if sum(end_flag) >= batch_size:
                 break
-        for k, v in zip([video_ids, ys.tolist()]):
+        for k, v in zip(video_ids, ys.tolist()):
             v = tokenizer.convert_ids_to_tokens(v)
+            end_count = -1
+            for i, token in enumerate(v):
+                if token == "[SEP]":
+                    end_count = i
+                    break
+            v = v[1:end_count]
             v = tokenizer.convert_tokens_to_string(v)
             vid2result[k] = v
     return vid2result
