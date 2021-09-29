@@ -40,13 +40,15 @@ class Opt:
 
 
 class MSRVTT(Dataset):
-    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer, mode: str = "train"):
+    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
+                 mode: str = "train", include_id: bool = False):
         super(MSRVTT, self).__init__()
         self.tokenizer = tokenizer
         # load video list
         video_feat_dir = plb.Path(video_feat_dir)
         self.video_feat_list = list(video_feat_dir.glob("*.npy"))
         self.mode = mode
+        self.include_id = include_id
 
         # load caption
         if mode == "train" or "validate":
@@ -65,25 +67,30 @@ class MSRVTT(Dataset):
     def __getitem__(self, index):
         video_path = self.video_feat_list[index]
         vid = video_path.stem
-        v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float).transpose(0, 1)
-        if self.mode == "train" or "val" or "validate":
+        v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float)
+        if v_feat.shape[0] > v_feat.shape[1]:
+            v_feat = v_feat.transpose(0, 1)
+        if self.mode == "train" or "validate":
             caption = np.random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
-            return v_feat, caption  # caption["input_ids"], caption["attention_mask"]
-        return v_feat
+            return (v_feat, caption, vid) if self.include_id is True else v_feat, caption
+        else:
+            return (v_feat, vid) if self.include_id is True else v_feat
 
     def __len__(self):
         return len(self.video_feat_list)
 
 
 class VATEX(Dataset):
-    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer, mode: str = "train"):
+    def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
+                 mode: str = "train", include_id: bool = False):
         super(VATEX, self).__init__()
         self.tokenizer = tokenizer
         # load video list
         video_feat_list = list(plb.Path(video_feat_dir).glob("*.npy"))
         self.video2path = {i.stem[:11]: str(i) for i in video_feat_list}
         self.mode = mode
+        self.include_id = include_id
 
         # load caption
         if mode == "train" or "validate":
@@ -101,11 +108,14 @@ class VATEX(Dataset):
         vid = self.video_ids[index]
         video_path = self.video2path[vid]
         v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float).squeeze()
-        if self.mode == "train" or "val" or "validate":
+        if v_feat.shape[0] > v_feat.shape[1]:
+            v_feat = v_feat.transpose(0, 1)
+        if self.mode == "train" or "validate":
             caption = np.random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
-            return v_feat, caption
-        return v_feat
+            return (v_feat, caption, vid) if self.include_id is True else v_feat, caption
+        else:
+            return (v_feat, vid) if self.include_id is True else v_feat
 
     def __len__(self):
         return len(self.video_ids)
@@ -130,19 +140,15 @@ def collate_fn(data):
         feat_mask_ts[i, :feat_len[i]] = 0
     feat_mask_ts = (feat_mask_ts == 1)
 
-    # if train or val
-    if type(data[0]) is tuple:  # if train or val
-        # text
-        text_data = [i[1] for i in data]
-        text_len = [len(i) for i in text_data]
-        max_len = max(text_len)
-        text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * opt.pad_id
-        for i in range(batch_size):
-            text_ts[i, :text_len[i]] = text_data[i]
-        text_mask_ts = (text_ts == opt.pad_id)
-        return feat_ts, text_ts, feat_mask_ts, text_mask_ts
-    else:
-        return feat_ts, feat_mask_ts
+    # text
+    text_data = [i[1] for i in data]
+    text_len = [len(i) for i in text_data]
+    max_len = max(text_len)
+    text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * opt.pad_id
+    for i in range(batch_size):
+        text_ts[i, :text_len[i]] = text_data[i]
+    text_mask_ts = (text_ts == opt.pad_id)
+    return feat_ts, text_ts, feat_mask_ts, text_mask_ts
 
 
 class PositionalEncoding(nn.Module):
@@ -378,3 +384,4 @@ if __name__ == "__main__":
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
                        f"./checkpoint/Bert_b32_vatexI3D_enc1_dec1_head4_emb768_hid1024_epoch{epoch}.pth")
+# TODO: 也许BERT加错了，embed的时候也应该有时间的区分
