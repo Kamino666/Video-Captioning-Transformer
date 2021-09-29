@@ -11,18 +11,18 @@ device = torch.device("cuda")
 
 class EvalOpt:
     # eval
-    video_feat_dir = r""
-    annotation_file = r""
+    video_feat_dir = r"data/MSRVTT-CLIP-FEATURES/val_feats"
+    annotation_file = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     tokenizer_type = "bert-base-uncased"
-    model_path = r"./checkpoint/"
+    model_path = r"./checkpoint/b32_msrvttCLIP_enc1_dec1_head4_emb512_hid1024_epoch100.pth"
     max_len = 30
     batch_size = 16
     # model
     bert_type = "bert-base-uncased"
-    enc_layer_num = 2
-    dec_layer_num = 2
+    enc_layer_num = 1
+    dec_layer_num = 1
     head_num = 4
-    feat_size = 1024
+    feat_size = 512
     emb_dim = 768
     hid_dim = 1024
     dropout = 0.1
@@ -165,9 +165,9 @@ if __name__ == "__main__":
     opt.start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     opt.end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
-    test_iter = VATEX(r"./data/val",
-                      r"./data/vatex_training_v1.0.json",
-                      tokenizer=tokenizer, mode="validate", include_id=True)
+    test_iter = MSRVTT(opt.video_feat_dir,
+                       opt.annotation_file,
+                       tokenizer=tokenizer, mode="validate", include_id=True)
     test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
-    metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor", "bleu"])
+    metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor"])
 
