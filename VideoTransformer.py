@@ -14,15 +14,24 @@ from tqdm import tqdm
 import numpy as np
 from timeit import default_timer as timer
 import re
+from utils import EarlyStopping
+import os
 
 device = torch.device("cuda")
 
 
 class Opt:
+    # data
+    train_feat_dir = r""
+    train_annotation_path = r""
+    val_feat_dir = r""
+    val_annotation_path = r""
     # train
     batch_size = 32
     lr = 1e-4
     max_len = 30
+    learning_rate_patience = 10
+    early_stopping_patience = 10
     # model
     bert_type = "bert-base-uncased"
     enc_layer_num = 2
@@ -37,6 +46,10 @@ class Opt:
     # save & load
     save_freq = 10
     load_model = None
+    model_save_dir = "./checkpoint"
+    _extra_msg = ""  # Dataset|Bert|pretrained
+    training_name = f"b{batch_size}_lr{str(lr)[2:]}_emb{emb_dim}_e{enc_layer_num}" \
+                    f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
 
 
 class MSRVTT(Dataset):
@@ -360,24 +373,33 @@ if __name__ == "__main__":
 
     transformer = transformer.to(device)
     transformer.freeze_bert()
+
     tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
     start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = pad_id
+
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.Adam(filter(lambda param: param.requires_grad, transformer.parameters()), lr=opt.lr)
-    writer = LogWriter("./log")
+    # dynamic learning rate
+    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, verbose=True, patience=opt.learning_rate_patience
+    )
+    # early stop
+    early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
+                                   verbose=True,
+                                   path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
+    # visulize & log
+    writer = LogWriter(f"./log/{opt.training_name}")
 
-    train_iter = VATEX(r"./data/val",
-                       r"./data/vatex_training_v1.0.json",
-                       tokenizer=tokenizer)
+    # dataloader
+    train_iter = VATEX(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
     train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_iter = VATEX(r"./data/val",
-                     r"./data/vatex_validation_v1.0.json",
-                     tokenizer=tokenizer, mode="validate")
+    val_iter = VATEX(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate")
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
+    # train
     for epoch in range(1 + st_epoch, opt.epoch_num + 1 + st_epoch):
         start_time = timer()
         train_loss = train_epoch(transformer, optimizer, train_dataloader)
@@ -391,7 +413,14 @@ if __name__ == "__main__":
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
         writer.add_text("text", result_text, step=epoch)
+
+        # early stopping
+        early_stopping(val_loss, transformer)
+        if early_stopping.early_stop:
+            print("Early stopping")
+            break
+
         if epoch % opt.save_freq == 0:
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
-                       f"./checkpoint/Bert_b32_vatexI3D_enc1_dec1_head4_emb768_hid1024_epoch{epoch}.pth")
+                       os.path.join(opt.model_save_dir, f"{opt.training_name}_epoch{epoch}.pth"))
