@@ -65,7 +65,7 @@ def collate_fn(data):
 def greedy_decode_dataset(model, test_loader):
     vid2result = {}
     for src, tgt, src_padding_mask, tgt_padding_mask, video_ids in tqdm(test_loader):
-        src = src.to(device).unsqueeze(0)  # N, T
+        src = src.to(device)  # N, T
         memory = model.encode(src).to(device)  # N, T, E
         batch_size = src.shape[0]
 
@@ -124,7 +124,13 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         bleu_4 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=4)
         return bleu_1["bleu"], bleu_2["bleu"], bleu_3["bleu"], bleu_4["bleu"]
     def rouge_l_metric(m):
-        return 0
+        rouge_ref = [i for i in video2caption.values()]
+        rouge_pred = [i for i in vid2result.values()]
+        for i in range(len(rouge_ref)):
+            for j in range(len(rouge_ref[i])):
+                m.add(prediction=rouge_pred[i], reference=rouge_ref[i][j])
+        meteor = m.compute()
+        return meteor['rougeL'].mid.recall
     def meteor_metric(m):
         meteor_ref = [i for i in video2caption.values()]
         meteor_pred = [i for i in vid2result.values()]
@@ -140,9 +146,9 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
     if "bleu" in metrics:
         print(bleu_metric(load_metric("./metric_config/bleu.py")))
     if "meteor" in metrics:
-        print(bleu_metric(load_metric("./metric_config/meteor.py")))
+        print(meteor_metric(load_metric("./metric_config/meteor.py")))
     if "rouge" in metrics:
-        print(bleu_metric(load_metric("./metric_config/rouge.py")))
+        print(rouge_l_metric(load_metric("./metric_config/rouge.py")))
 
 
 if __name__ == "__main__":
@@ -160,6 +166,7 @@ if __name__ == "__main__":
                                    dim_feedforward=opt.hid_dim)
     transformer.load_state_dict(torch.load(opt.model_path))
     transformer.eval()
+    transformer = transformer.to(device)
     # load data
     tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     opt.start_id = tokenizer.convert_tokens_to_ids("[CLS]")
@@ -169,5 +176,5 @@ if __name__ == "__main__":
                        opt.annotation_file,
                        tokenizer=tokenizer, mode="validate", include_id=True)
     test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
-    metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor"])
+    metric_eval(transformer, test_dataloader, test_iter, metrics=["rouge"])
 
