@@ -241,6 +241,11 @@ class VideoTransformer(nn.Module):
                 self.positional_encoding(self.tgt_to_emb(tgt)), memory, tgt_mask
             )
 
+    def freeze_bert(self):
+        assert self.use_bert is True
+        for name, v in self.named_parameters():
+            if "tgt_to_emb" in name:
+                v.requires_grad = False
 
 def generate_square_subsequent_mask(sz):
     mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)
@@ -354,13 +359,14 @@ if __name__ == "__main__":
         st_epoch = int(re.findall("epoch([0-9]+)", opt.load_model)[0])
 
     transformer = transformer.to(device)
+    transformer.freeze_bert()
     tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
     start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = pad_id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
-    optimizer = torch.optim.Adam(transformer.parameters(), lr=opt.lr)
+    optimizer = torch.optim.Adam(filter(lambda param: param.requires_grad, transformer.parameters()), lr=opt.lr)
     writer = LogWriter("./log")
 
     train_iter = VATEX(r"./data/val",
@@ -389,4 +395,3 @@ if __name__ == "__main__":
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
                        f"./checkpoint/Bert_b32_vatexI3D_enc1_dec1_head4_emb768_hid1024_epoch{epoch}.pth")
-# TODO: 也许BERT加错了，embed的时候也应该有时间的区分
