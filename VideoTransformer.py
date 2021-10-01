@@ -198,6 +198,7 @@ class VideoTransformer(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
         self.generator = nn.Linear(emb_size, self.tokenizer.vocab_size)
         self.src_to_emb = nn.Linear(feat_size, emb_size)
+        self.emb_size = emb_size
         self.use_bert = use_bert
         if use_bert is True:
             self.tgt_to_emb = BertModel.from_pretrained(bert_type)
@@ -216,7 +217,11 @@ class VideoTransformer(nn.Module):
                 memory_key_padding_mask: Tensor = None):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
         if self.use_bert is True:
-            tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt).last_hidden_state.to(device))
+            # tgt: N T
+            tgt_emb = torch.zeros([tgt.shape[0], tgt.shape[1], self.emb_size], dtype=torch.float, device=device)
+            for i in range(tgt.shape[1]):
+                tgt_emb[:, i, :] = self.tgt_to_emb(tgt[:, :i+1, :]).last_hidden_state.to(device)[:, i, :]
+            tgt_emb = self.positional_encoding(tgt_emb)
         else:
             tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
