@@ -1,3 +1,5 @@
+import random
+
 import torch
 import torch.nn as nn
 from torch.nn import Transformer
@@ -26,6 +28,7 @@ class Opt:
     train_annotation_path = r""
     val_feat_dir = r""
     val_annotation_path = r""
+    raw_video_dir = r""
     # train
     batch_size = 32
     lr = 1e-4
@@ -86,12 +89,36 @@ class MSRVTT(Dataset):
         if self.mode == "train" or "validate":
             caption = np.random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
-            return (v_feat, caption, vid) if self.include_id is True else v_feat, caption
+            return v_feat, caption, vid if self.include_id is True else v_feat, caption
         else:
-            return (v_feat, vid) if self.include_id is True else v_feat
+            return v_feat, vid if self.include_id is True else v_feat
 
     def __len__(self):
         return len(self.video_feat_list)
+
+    def get_a_sample(self, index=None, ori_video_dir=None):
+        return_dict = {}
+        index = random.randrange(0, len(self)) if index is None else index
+
+        video_path = self.video_feat_list[index]
+        vid = video_path.stem
+        v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float)
+        return_dict["v_feat"] = v_feat if v_feat.shape[0] > v_feat.shape[1] else v_feat.transpose(0, 1)
+        return_dict["v_id"] = vid
+
+        if self.mode == "train" or "validate":
+            caption = np.random.choice(self.video2caption[vid])
+            enc_caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+            return_dict["raw_caption"] = caption
+            return_dict["enc_caption"] = enc_caption
+
+        if ori_video_dir is not None:
+            ori_video_dir = plb.Path(ori_video_dir)
+            assert ori_video_dir.is_dir()
+            raw_video_path = list(ori_video_dir.glob("{vid}*"))[0]
+            return_dict["raw_v_path"] = raw_video_path
+
+        return return_dict
 
 
 class VATEX(Dataset):
@@ -126,9 +153,9 @@ class VATEX(Dataset):
         if self.mode == "train" or "validate":
             caption = np.random.choice(self.video2caption[vid])
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
-            return (v_feat, caption, vid) if self.include_id is True else v_feat, caption
+            return v_feat, caption, vid if self.include_id is True else v_feat, caption
         else:
-            return (v_feat, vid) if self.include_id is True else v_feat
+            return v_feat, vid if self.include_id is True else v_feat
 
     def __len__(self):
         return len(self.video_ids)
@@ -338,17 +365,15 @@ def greedy_decode(model, src, max_len, start_symbol, end_symbol):
     return ys.squeeze().tolist()
 
 
-def translate(model, test_dataset, max_len, start_symbol, end_symbol, tokenizer):
-    src, tgt = test_dataset[0]
+def translate(model, src, max_len, start_symbol, end_symbol, tokenizer):
     src = src.to(device)
     # inference
     result = greedy_decode(model, src, max_len, start_symbol, end_symbol)  # list T
     # to text
-    result_tokens = tokenizer.convert_ids_to_tokens(result)
-    result_text = tokenizer.convert_tokens_to_string(result_tokens)
-    result_tgt = tokenizer.convert_ids_to_tokens(tgt)
-    result_tgt = tokenizer.convert_tokens_to_string(result_tgt)
-    return result_text, result_tgt
+    result_text = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result))
+    result_text = result_text.replace("[CLS]", "")
+    result_text = result_text.replace("[SEP]", "")
+    return result_text
 
 
 if __name__ == "__main__":
@@ -394,9 +419,9 @@ if __name__ == "__main__":
     writer = LogWriter(f"./log/{opt.training_name}")
 
     # dataloader
-    train_iter = VATEX(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
+    train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
     train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_iter = VATEX(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate")
+    val_iter = MSRVTT(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate")
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
     # train
@@ -404,11 +429,17 @@ if __name__ == "__main__":
         start_time = timer()
         train_loss = train_epoch(transformer, optimizer, train_dataloader)
         end_time = timer()
+
         val_loss = evaluate(transformer, val_dataloader)
-        result_text, result_tgt = translate(transformer, val_iter, opt.max_len, start_id, end_id, tokenizer)
+
+        sample = val_iter.get_a_sample(ori_video_dir=opt.raw_video_dir)
+        result_text = translate(transformer, sample["v_feat"], opt.max_len, start_id, end_id, tokenizer)
+        sample_text = sample["raw_caption"]
+
+        # logging
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
               f" Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
-        print(f"tgt:{result_tgt} \nresult:{result_text}")
+        print(f"target:{sample_text} \nresult:{result_text}")
         writer.add_scalar("train_loss", train_loss, step=epoch)
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
