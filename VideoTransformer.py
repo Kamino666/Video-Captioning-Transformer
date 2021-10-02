@@ -24,34 +24,34 @@ device = torch.device("cuda")
 
 class Opt:
     # data
-    train_feat_dir = r""
-    train_annotation_path = r""
-    val_feat_dir = r""
-    val_annotation_path = r""
-    raw_video_dir = r""
+    train_feat_dir = r"data/MSRVTT-CLIP-FEATURES/train_feats"
+    train_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
+    val_feat_dir = r"data/MSRVTT-CLIP-FEATURES/val_feats"
+    val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
+    raw_video_dir = r"data/MSRVTT_trainval"
     # train
     batch_size = 32
     lr = 1e-4
     max_len = 30
     learning_rate_patience = 10
-    early_stopping_patience = 10
+    early_stopping_patience = 30
     # model
     bert_type = "bert-base-uncased"
     enc_layer_num = 2
     dec_layer_num = 2
-    head_num = 4
-    feat_size = 1024
+    head_num = 8
+    feat_size = 512
     emb_dim = 768
-    hid_dim = 1024
-    dropout = 0.1
+    hid_dim = 768
+    dropout = 0.3
     epoch_num = 300
     use_bert = False
     # save & load
-    save_freq = 10
+    save_freq = 50
     load_model = None
     model_save_dir = "./checkpoint"
-    _extra_msg = ""  # Dataset|Bert|pretrained
-    training_name = f"b{batch_size}_lr{str(lr)[2:]}_emb{emb_dim}_e{enc_layer_num}" \
+    _extra_msg = "MSRVTT&CLIP"  # Dataset|Bert|pretrained
+    training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
 
 
@@ -115,7 +115,7 @@ class MSRVTT(Dataset):
         if ori_video_dir is not None:
             ori_video_dir = plb.Path(ori_video_dir)
             assert ori_video_dir.is_dir()
-            raw_video_path = list(ori_video_dir.glob("{vid}*"))[0]
+            raw_video_path = list(ori_video_dir.glob(f"{vid}*"))[0]
             return_dict["raw_v_path"] = raw_video_path
 
         return return_dict
@@ -444,6 +444,7 @@ if __name__ == "__main__":
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
         writer.add_text("text", result_text, step=epoch)
+        lr_scheduler.step(val_loss)
 
         # early stopping
         early_stopping(val_loss, transformer)
