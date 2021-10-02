@@ -61,7 +61,7 @@ def train_epoch(model, optimizer, train_dataloader):
         src_padding_mask = src_padding_mask.to(device)
 
         tgt_input = tgt[:, :-1]  # N T-1
-        tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1])
+        tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1]).to(device)
 
         logits = model(src, tgt_input,
                        tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,
@@ -90,7 +90,7 @@ def evaluate(model, val_dataloader):
         src_padding_mask = src_padding_mask.to(device)
 
         tgt_input = tgt[:, :-1]  # N T-1
-        tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1])
+        tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1]).to(device)
         with torch.no_grad():
             logits = model(src, tgt_input,
                            tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,
@@ -173,7 +173,8 @@ if __name__ == "__main__":
                                    bert_type=opt.bert_type,
                                    dropout=opt.dropout,
                                    use_bert=opt.use_bert,
-                                   dim_feedforward=opt.hid_dim)
+                                   dim_feedforward=opt.hid_dim,
+                                   device=device)
     if opt.load_model is None:
         st_epoch = 0
         for p in transformer.parameters():
