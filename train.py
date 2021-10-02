@@ -185,7 +185,7 @@ if __name__ == "__main__":
         st_epoch = int(re.findall("epoch([0-9]+)", opt.load_model)[0])
 
     transformer = transformer.to(device)
-    transformer.freeze_bert()
+    # transformer.freeze_bert()
 
     tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
@@ -231,7 +231,7 @@ if __name__ == "__main__":
         writer.add_scalar("train_loss", train_loss, step=epoch)
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
-        writer.add_text("text", result_text, step=epoch)
+        writer.add_text("text", sample_text + "\n" + result_text, step=epoch)
         lr_scheduler.step(val_loss)
 
         # early stopping
