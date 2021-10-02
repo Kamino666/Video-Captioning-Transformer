@@ -1,6 +1,6 @@
 from datasets import load_metric
-from VideoTransformer import VideoTransformer, MSRVTT, VATEX
-from VideoTransformer import generate_square_subsequent_mask
+from train import VideoTransformer, MSRVTT, VATEX
+from train import generate_square_subsequent_mask
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer

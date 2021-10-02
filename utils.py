@@ -1,5 +1,9 @@
 import logging
 import torch.distributed as dist
+import torch
+import torch.nn as nn
+import numpy as np
+
 
 logger_initialized = {}
 
@@ -79,11 +83,6 @@ def get_logger(name, log_file=None, log_level=logging.INFO, file_mode='w'):
     return logger
 
 
-import torch
-import torch.nn as nn
-import numpy as np
-
-
 class MaskCriterion(nn.Module):
     """calculate the CrossEntropyLoss in mask=1 area"""
 
@@ -159,3 +158,9 @@ class EarlyStopping:
                 f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
+
+
+def generate_square_subsequent_mask(sz):
+    mask = (torch.triu(torch.ones((sz, sz))) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    return mask
