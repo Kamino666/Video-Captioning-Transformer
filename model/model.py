@@ -48,11 +48,11 @@ class VideoTransformer(nn.Module):
 
     def forward(self,
                 src: Tensor,
-                tgt: Optional[Tensor, List[Tensor]],
+                tgt: Tensor,
                 src_mask: Tensor,
-                tgt_mask: Optional[Tensor, List[Tensor]],
+                tgt_mask: Tensor,
                 src_padding_mask: Tensor,
-                tgt_padding_mask: Optional[Tensor, List[Tensor]],
+                tgt_padding_mask: Tensor,
                 memory_key_padding_mask: Tensor = None):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
 
@@ -65,13 +65,13 @@ class VideoTransformer(nn.Module):
         # 如果是多个caption，则依次decode出结果
         elif type(tgt) == list:
             # 先得到encoder的输出
-            memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_padding_mask)
+            memory = self.transformer.encoder(src_emb, mask=src_mask, src_key_padding_mask=src_padding_mask)
             # 再一个一个视频decode
             tgts, tgt_masks, tgt_padding_masks = tgt, tgt_mask, tgt_padding_mask
             outputs = []
-            for tgt, tgt_mask, tgt_padding_mask in zip([tgts, tgt_masks, tgt_padding_masks]):
+            for tgt, tgt_mask, tgt_padding_mask in zip(tgts, tgt_masks, tgt_padding_masks):
                 tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
-                output = self.decoder(tgt_emb, memory, tgt_mask=tgt_mask,
+                output = self.transformer.decoder(tgt_emb, memory, tgt_mask=tgt_mask,
                                       tgt_key_padding_mask=tgt_padding_mask,
                                       memory_key_padding_mask=memory_key_padding_mask)
                 output = self.generator(output)

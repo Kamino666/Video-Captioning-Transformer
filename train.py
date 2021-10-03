@@ -26,8 +26,8 @@ class Opt:
     val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = r"data/MSRVTT_trainval"
     # train
-    batch_size = 32
-    lr = 1e-4
+    batch_size = 8
+    lr = 5e-4
     max_len = 30
     learning_rate_patience = 10
     early_stopping_patience = 30
@@ -46,7 +46,7 @@ class Opt:
     save_freq = 50
     load_model = None
     model_save_dir = "./checkpoint"
-    _extra_msg = "MSRVTT&CLIP"  # Dataset|Bert|pretrained
+    _extra_msg = "MSRVTT&CLIP&gda"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
 
@@ -128,7 +128,7 @@ def train_epoch_gda(model, optimizer, train_dataloader):
 
         # 计算loss
         local_losses = 0
-        for logit, tgt_out in zip([logits_list, tgt_outs]):
+        for logit, tgt_out in zip(logits_list, tgt_outs):
             loss = loss_fn(logit.reshape(-1, logit.shape[-1]), tgt_out.reshape(-1))
             loss.backward(retain_graph=True)
             local_losses += loss.item()
@@ -141,7 +141,7 @@ def train_epoch_gda(model, optimizer, train_dataloader):
 
 # function to generate output sequence using greedy algorithm
 def greedy_decode(model, src, max_len, start_symbol, end_symbol):
-    src = src.to(device).unsqueeze(0)  # 1, T
+    src = src.to(device).unsqueeze(0).transpose(1, 2)  # 1, T, e
     memory = model.encode(src).to(device)  # 1, T, E
 
     ys = torch.ones(1, 1).fill_(start_symbol).type(torch.long).to(device)  # 1, 1
@@ -271,7 +271,7 @@ if __name__ == "__main__":
                                    verbose=True,
                                    path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
     # visulize & log
-    writer = LogWriter(f"./log/{opt.training_name}")
+    writer = LogWriter(f"./log/gda/{opt.training_name}")
 
     # dataloader
     train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer, return_all_captions=True)
@@ -282,7 +282,7 @@ if __name__ == "__main__":
     # train
     for epoch in range(1 + st_epoch, opt.epoch_num + 1 + st_epoch):
         start_time = timer()
-        train_loss = train_epoch(transformer, optimizer, train_dataloader)
+        train_loss = train_epoch_gda(transformer, optimizer, train_dataloader)
         end_time = timer()
 
         val_loss = evaluate(transformer, val_dataloader)
