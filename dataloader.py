@@ -45,7 +45,8 @@ def make_video_buffer(video_paths, save_path, frames_num, frames_size, compress=
 
 class MSRVTT(Dataset):
     def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
-                 mode: str = "train", include_id: bool = False, return_all_captions=False):
+                 mode: str = "train", include_id: bool = False, return_all_captions=False,
+                 by_caption=True):
         super(MSRVTT, self).__init__()
         self.tokenizer = tokenizer
         # load video list
@@ -54,6 +55,7 @@ class MSRVTT(Dataset):
         self.mode = mode
         self.include_id = include_id
         self.return_all_captions = return_all_captions
+        self.by_caption = by_caption
 
         # load caption
         if mode == "train" or "validate":
@@ -69,12 +71,18 @@ class MSRVTT(Dataset):
                 else:
                     self.video2caption[cap["video_id"]].append(cap["caption"])
 
-    def __getitem__(self, index):
+            if self.by_caption is True:
+                video2path = {i.stem:i for i in self.video_feat_list}
+                self.cap_vid_list = []
+                for video, captions in self.video2caption.items():
+                    for cap in captions:
+                        self.cap_vid_list.append((cap, video2path[video]))
+
+    def _getitem_by_video(self, index):
         video_path = self.video_feat_list[index]
         vid = video_path.stem
         v_feat = torch.tensor(np.load(str(video_path)), dtype=torch.float)
-        if v_feat.shape[0] > v_feat.shape[1]:
-            v_feat = v_feat.transpose(0, 1)
+        v_feat = v_feat.transpose(0, 1) if v_feat.shape[0] > v_feat.shape[1] else v_feat
         if self.mode == "train" or "validate":
             if self.return_all_captions:
                 captions = self.video2caption[vid]
@@ -88,8 +96,22 @@ class MSRVTT(Dataset):
         else:
             return v_feat, vid if self.include_id is True else v_feat
 
+    def _getitem_by_caption(self, index):
+        v_path, caption = self.cap_vid_list[index]
+        v_feat = torch.tensor(np.load(str(v_path)), dtype=torch.float)
+        v_feat = v_feat.transpose(0, 1) if v_feat.shape[0] > v_feat.shape[1] else v_feat
+        caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+        return v_feat, caption, v_path.stem if self.include_id is True else v_feat, caption
+
+    def __getitem__(self, index):
+        if self.by_caption is False:
+            return self._getitem_by_video(index)
+        else:
+            assert self.mode != "test"
+            return self._getitem_by_caption(index)
+
     def __len__(self):
-        return len(self.video_feat_list)
+        return len(self.cap_vid_list) if self.by_caption is True else len(self.video_feat_list)
 
     def get_a_sample(self, index=None, ori_video_dir=None):
         return_dict = {}
