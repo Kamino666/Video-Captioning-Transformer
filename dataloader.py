@@ -45,7 +45,7 @@ def make_video_buffer(video_paths, save_path, frames_num, frames_size, compress=
 
 class MSRVTT(Dataset):
     def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
-                 mode: str = "train", include_id: bool = False):
+                 mode: str = "train", include_id: bool = False, return_all_captions=False):
         super(MSRVTT, self).__init__()
         self.tokenizer = tokenizer
         # load video list
@@ -53,6 +53,7 @@ class MSRVTT(Dataset):
         self.video_feat_list = list(video_feat_dir.glob("*.npy"))
         self.mode = mode
         self.include_id = include_id
+        self.return_all_captions = return_all_captions
 
         # load caption
         if mode == "train" or "validate":
@@ -75,9 +76,15 @@ class MSRVTT(Dataset):
         if v_feat.shape[0] > v_feat.shape[1]:
             v_feat = v_feat.transpose(0, 1)
         if self.mode == "train" or "validate":
-            caption = np.random.choice(self.video2caption[vid])
-            caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
-            return v_feat, caption, vid if self.include_id is True else v_feat, caption
+            if self.return_all_captions:
+                captions = self.video2caption[vid]
+                captions = [self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+                            for caption in captions]
+                return v_feat, captions, vid if self.include_id is True else v_feat, captions
+            else:
+                caption = np.random.choice(self.video2caption[vid])
+                caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+                return v_feat, caption, vid if self.include_id is True else v_feat, caption
         else:
             return v_feat, vid if self.include_id is True else v_feat
 

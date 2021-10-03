@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import List
+from typing import List, Optional
 
 from .Embedding import PositionalEmbedding
 from .MME import MultiModalEmbedding
@@ -34,38 +34,49 @@ class VideoTransformer(nn.Module):
                                        activation="gelu",
                                        batch_first=True)
         self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
-        self.generator = nn.Linear(emb_size, self.tokenizer.vocab_size)
+        pad_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
+        vocab_size = self.tokenizer.vocab_size
+        self.generator = nn.Linear(emb_size, vocab_size)
+
+        self.positional_encoding = PositionalEmbedding(emb_size, dropout=dropout)
         self.src_to_emb = nn.Linear(feat_size, emb_size)
+        self.tgt_to_emb = nn.Embedding(vocab_size, emb_size, padding_idx=pad_id)
+
         self.emb_size = emb_size
         self.device = device
         self.use_bert = use_bert
-        if use_bert is True:
-            self.tgt_to_emb = BertModel.from_pretrained(bert_type)
-        else:
-            pad_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
-            self.tgt_to_emb = nn.Embedding(self.tokenizer.vocab_size, emb_size, padding_idx=pad_id)
-        self.positional_encoding = PositionalEmbedding(emb_size, dropout=dropout)
 
     def forward(self,
                 src: Tensor,
-                tgt: Tensor,
+                tgt: Optional[Tensor, List[Tensor]],
                 src_mask: Tensor,
-                tgt_mask: Tensor,
+                tgt_mask: Optional[Tensor, List[Tensor]],
                 src_padding_mask: Tensor,
-                tgt_padding_mask: Tensor,
+                tgt_padding_mask: Optional[Tensor, List[Tensor]],
                 memory_key_padding_mask: Tensor = None):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
-        if self.use_bert is True:
-            # tgt: N T
-            tgt_emb = torch.zeros([tgt.shape[0], tgt.shape[1], self.emb_size], dtype=torch.float, device=self.device)
-            for i in range(tgt.shape[1]):
-                tgt_emb[:, i, :] = self.tgt_to_emb(tgt[:, :i + 1, :]).last_hidden_state.to(self.device)[:, i, :]
-            tgt_emb = self.positional_encoding(tgt_emb)
-        else:
+
+        # 如果是单个caption，则直接transformer
+        if type(tgt) == Tensor:
             tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
-        outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
-                                src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
-        return self.generator(outs)
+            outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
+                                    src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
+            return self.generator(outs)
+        # 如果是多个caption，则依次decode出结果
+        elif type(tgt) == list:
+            # 先得到encoder的输出
+            memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_padding_mask)
+            # 再一个一个视频decode
+            tgts, tgt_masks, tgt_padding_masks = tgt, tgt_mask, tgt_padding_mask
+            outputs = []
+            for tgt, tgt_mask, tgt_padding_mask in zip([tgts, tgt_masks, tgt_padding_masks]):
+                tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
+                output = self.decoder(tgt_emb, memory, tgt_mask=tgt_mask,
+                                      tgt_key_padding_mask=tgt_padding_mask,
+                                      memory_key_padding_mask=memory_key_padding_mask)
+                output = self.generator(output)
+                outputs.append(output)
+            return outputs
 
     def encode(self, src: Tensor):
         return self.transformer.encoder(self.positional_encoding(self.src_to_emb(src)))
