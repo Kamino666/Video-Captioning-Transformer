@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from transformers import AutoTokenizer
@@ -20,33 +21,33 @@ device = torch.device("cuda")
 
 class Opt:
     # data
-    train_feat_dir = r"data/MSRVTT-CLIP-FEATURES/train_feats"
+    train_feat_dir = r"data/msrvtt_resnet152_fps3_feats/train"
     train_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
-    val_feat_dir = r"data/MSRVTT-CLIP-FEATURES/val_feats"
+    val_feat_dir = r"data/msrvtt_resnet152_fps3_feats/val"
     val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = r"data/MSRVTT_trainval"
     # train
-    batch_size = 8
-    lr = 5e-4
-    max_len = 30
-    learning_rate_patience = 10
-    early_stopping_patience = 30
+    batch_size = 32
+    lr = 1e-4
+    max_len = 20
+    learning_rate_patience = 5
+    early_stopping_patience = 10
     # model
     bert_type = "bert-base-uncased"
-    enc_layer_num = 2
-    dec_layer_num = 2
+    enc_layer_num = 4
+    dec_layer_num = 4
     head_num = 8
-    feat_size = 512
-    emb_dim = 768
-    hid_dim = 768
+    feat_size = 2048
+    emb_dim = 512
+    hid_dim = 2048
     dropout = 0.3
-    epoch_num = 300
+    epoch_num = 30
     use_bert = False
     # save & load
     save_freq = 50
     load_model = None
     model_save_dir = "./checkpoint"
-    _extra_msg = "MSRVTT&CLIP&gda"  # Dataset|Bert|pretrained
+    _extra_msg = "MSRVTT&R152"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
 
@@ -149,6 +150,7 @@ def greedy_decode(model, src, max_len, start_symbol, end_symbol):
         tgt_mask = (generate_square_subsequent_mask(ys.shape[1]).type(torch.bool)).to(device)  # t, t
         out = model.decode(ys, memory, tgt_mask)
         prob = model.generator(out[:, -1])  # vocab_size
+        prob = F.softmax(prob)
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.item()
 
@@ -271,18 +273,18 @@ if __name__ == "__main__":
                                    verbose=True,
                                    path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
     # visulize & log
-    writer = LogWriter(f"./log/gda/{opt.training_name}")
+    writer = LogWriter(f"./log/resnet/{opt.training_name}")
 
     # dataloader
-    train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer, return_all_captions=True)
-    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=multi_cap_collate_fn, shuffle=True)
+    train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
+    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
     val_iter = MSRVTT(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate")
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
 
     # train
     for epoch in range(1 + st_epoch, opt.epoch_num + 1 + st_epoch):
         start_time = timer()
-        train_loss = train_epoch_gda(transformer, optimizer, train_dataloader)
+        train_loss = train_epoch(transformer, optimizer, train_dataloader)
         end_time = timer()
 
         val_loss = evaluate(transformer, val_dataloader)

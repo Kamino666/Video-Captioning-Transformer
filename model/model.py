@@ -48,32 +48,31 @@ class VideoTransformer(nn.Module):
 
     def forward(self,
                 src: Tensor,
-                tgt: Tensor,
+                tgt: Optional[Tensor, List[Tensor]],
                 src_mask: Tensor,
-                tgt_mask: Tensor,
+                tgt_mask: Optional[Tensor, List[Tensor]],
                 src_padding_mask: Tensor,
-                tgt_padding_mask: Tensor,
-                memory_key_padding_mask: Tensor = None):
+                tgt_padding_mask: Optional[Tensor, List[Tensor]],):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
 
         # 如果是单个caption，则直接transformer
         if type(tgt) == Tensor:
             tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
             outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
-                                    src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
+                                    src_padding_mask, tgt_padding_mask, src_padding_mask)
             return self.generator(outs)
         # 如果是多个caption，则依次decode出结果
         elif type(tgt) == list:
             # 先得到encoder的输出
-            memory = self.transformer.encoder(src_emb, mask=src_mask, src_key_padding_mask=src_padding_mask)
+            memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_padding_mask)
             # 再一个一个视频decode
             tgts, tgt_masks, tgt_padding_masks = tgt, tgt_mask, tgt_padding_mask
             outputs = []
-            for tgt, tgt_mask, tgt_padding_mask in zip(tgts, tgt_masks, tgt_padding_masks):
+            for tgt, tgt_mask, tgt_padding_mask in zip([tgts, tgt_masks, tgt_padding_masks]):
                 tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
-                output = self.transformer.decoder(tgt_emb, memory, tgt_mask=tgt_mask,
+                output = self.decoder(tgt_emb, memory, tgt_mask=tgt_mask,
                                       tgt_key_padding_mask=tgt_padding_mask,
-                                      memory_key_padding_mask=memory_key_padding_mask)
+                                      memory_key_padding_mask=src_padding_mask)
                 output = self.generator(output)
                 outputs.append(output)
             return outputs
@@ -102,7 +101,7 @@ class MMVideoTransformer(nn.Module):
     def __init__(self,
                  num_encoder_layers: int,
                  num_decoder_layers: int,
-                 feat_sizes: List[int],
+                 feat_dims: dict,
                  d_model: int,
                  nhead: int,
                  bert_type: str = "bert-base-uncased",
@@ -113,9 +112,7 @@ class MMVideoTransformer(nn.Module):
                  agg_method: str = "avgpooling",
                  ):
         super(MMVideoTransformer, self).__init__()
-        feat_num = len(feat_sizes)
-        self.feat_num = feat_num
-        self.emb_size = d_model
+        self.d_model = d_model
         self.device = device
 
         tokenizer = AutoTokenizer.from_pretrained(bert_type)
@@ -123,47 +120,40 @@ class MMVideoTransformer(nn.Module):
         vocab_size = tokenizer.vocab_size
         self.tgt_to_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.positional_encoding = PositionalEmbedding(d_model, dropout=dropout)
-        self.mme = MultiModalEmbedding(d_model, feat_sizes, dropout, agg_method=agg_method)
 
-        self.encoders = nn.ModuleList([
-            nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, batch_first=True),
-                                  num_encoder_layers,
-                                  nn.LayerNorm(d_model)) for _ in range(feat_num)
-        ])
+        self.mme = MultiModalEmbedding(d_model, feat_dims, dropout, agg_method=agg_method)
 
-        decoder_layer = nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, batch_first=True)
-        decoder_norm = nn.LayerNorm(d_model)
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
+        self.mmt_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, batch_first=True),
+            num_encoder_layers,
+            nn.LayerNorm(d_model)
+        )
+        self.mmt_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation,batch_first=True),
+            num_decoder_layers,
+            nn.LayerNorm(d_model)
+        )
 
         self.generator = nn.Linear(d_model, self.tokenizer.vocab_size)
 
     def forward(self,
-                srcs: List[Tensor],
+                feats_dict: dict,
+                feats_padding_mask_dict: dict,
                 tgt: Tensor,
-                src_masks: List[Tensor],
                 tgt_mask: Tensor,
-                src_padding_masks: List[Tensor],
-                tgt_padding_mask: Tensor,
-                memory_key_padding_mask: Tensor = None):
-        memories = []
-        for src, src_mask, src_padding_mask in zip(srcs, src_masks, src_padding_masks):
-            src = self.positional_encoding(src)  # src: N T E
-            memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_padding_mask)  # memory N T E
-            memories.append(memory)
-        video_embeddings = self.mme(memories)  # List[(N, T+1, E)]
-        video_embeddings = torch.cat(video_embeddings, dim=1)  # N K(T+1) E
+                tgt_padding_mask: Tensor):
+        # video features
+        features, feats_padding_masks, lengths = self.mme(feats_dict, feats_padding_mask_dict)
+        memories = self.mmt_encoder(
+            features, mask=None, src_key_padding_mask=feats_padding_masks
+        )
 
-        tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
-        output = self.decoder(tgt_emb, video_embeddings, tgt_mask=tgt_mask, memory_mask=None,
-                              tgt_key_padding_mask=tgt_padding_mask,
-                              memory_key_padding_mask=memory_key_padding_mask)
-        return self.generator(output)  # N S E -> N S vocab_size
+        # caption embeddings
+        caption_emb = self.positional_encoding(self.tgt_to_emb(tgt))
+        output = self.mmt_decoder(
+            caption_emb, memories, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_padding_mask,
+            memory_mask=None, memory_key_padding_mask=feats_padding_masks
+        )
 
-    def encode(self, srcs):
-        memories = []
-        for src in srcs:
-            src = self.positional_encoding(src)  # src: N T E
-            memory = self.encoder(src)  # memory N T E
-            memories.append(memory)
-        video_embeddings = self.mme(memories)  # List[(N, T+1, E)]
-        video_embeddings = torch.cat(video_embeddings, dim=1)  # N K(T+1) E
+        return self.generator(output)
+
