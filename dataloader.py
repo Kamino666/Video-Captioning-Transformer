@@ -9,6 +9,7 @@ import pathlib as plb
 from tqdm import tqdm
 import random
 
+
 def load_single_video(video_path, frames_num, frames_size, tensor=False):
     video = mmcv.VideoReader(str(video_path))
     frame_cnt = video.frame_cnt
@@ -72,7 +73,7 @@ class MSRVTT(Dataset):
                     self.video2caption[cap["video_id"]].append(cap["caption"])
 
             if self.by_caption is True:
-                video2path = {i.stem:i for i in self.video_feat_list}
+                video2path = {i.stem: i for i in self.video_feat_list}
                 self.cap_vid_list = []
                 for video, captions in self.video2caption.items():
                     for cap in captions:
@@ -177,3 +178,86 @@ class VATEX(Dataset):
     def __len__(self):
         return len(self.video_ids)
 
+
+class MultiModalMSRVTT(Dataset):
+    def __init__(self, video_dirs: dict, annotation_file: str, tokenizer, mode: str = "train"):
+        """
+        :param video_dirs:
+        :param annotation_file:
+        :param tokenizer:
+        :param mode: 如果是train和validate，加载caption并以按照caption遍历；如果是test则按照video遍历
+        """
+        super(MultiModalMSRVTT, self).__init__()
+        self.tokenizer = tokenizer
+        self.mode = mode
+        self._validate_input(video_dirs.values())
+        assert mode in ["train", "validate", "test"]
+
+        # load path of features
+        self.vid2path = {}
+        for feat_name, feat_dir in video_dirs:
+            feat_dir = plb.Path(feat_dir)
+            feat_paths = feat_dir.glob("*")
+            for feat_path in feat_paths:
+                if feat_path.stem in self.vid2path:
+                    self.vid2path[feat_path.stem][feat_name] = feat_path
+                else:
+                    self.vid2path[feat_path.stem] = {feat_name: feat_path}
+        # load captions
+        if mode == "train" or "validate":
+            self.cap_vid_pair = []
+            with open(annotation_file, encoding='utf-8') as f:
+                annotation = json.load(f)
+            video2split = {i["video_id"]: i["split"] for i in annotation["videos"]}
+            for caption in annotation["sentences"]:
+                if video2split[caption["video_id"]] != mode:
+                    continue
+                else:
+                    self.cap_vid_pair.append((caption["video_id"], caption["caption"]))
+
+    def _validate_input(self, video_dirs):
+        for v_dir in video_dirs:
+            if plb.Path(v_dir).is_dir() is False:
+                raise ValueError(f"{v_dir} is not a directory")
+
+    def __getitem__(self, item):
+        if self.mode is not "test":
+            caption, vid = self.cap_vid_pair[item]
+            caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+            feats_dict = {}
+            v_paths = self.vid2path[vid]
+            for feat_name, v_path in v_paths:
+                feats_dict[feat_name] = torch.from_numpy(np.load(v_path))
+            return feats_dict, caption, vid
+        else:
+            feats_dict = {}
+            vid = list(self.vid2path.keys())[item]
+            v_paths = self.vid2path[vid]
+            for feat_name, v_path in v_paths:
+                feats_dict[feat_name] = torch.from_numpy(np.load(v_path))
+            return feats_dict, vid
+
+    def __len__(self):
+        return len(self.cap_vid_pair) if self.mode is not "test" else len(self.vid2path)
+
+    def get_a_sample(self, index=None, ori_video_dir=None):
+        index = random.randrange(0, len(self)) if index is None else index
+        sample_dict = {}
+        if self.mode == "test":
+            feats_dict, vid = self.__getitem__(index)
+            sample_dict["feats_dict"] = feats_dict
+            sample_dict["vid"] = vid
+        else:
+            feats_dict, caption, vid = self.__getitem__(index)
+            sample_dict["feats_dict"] = feats_dict
+            sample_dict["vid"] = vid
+            sample_dict["raw_caption"] = caption
+            sample_dict["enc_caption"] = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
+
+        if ori_video_dir is not None:
+            ori_video_dir = plb.Path(ori_video_dir)
+            assert ori_video_dir.is_dir()
+            raw_video_path = list(ori_video_dir.glob(f"{vid}*"))[0]
+            sample_dict["raw_v_path"] = raw_video_path
+
+        return sample_dict
