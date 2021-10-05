@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import List, Optional
 
 from .Embedding import PositionalEmbedding
 from .MME import MultiModalEmbedding
@@ -48,11 +47,11 @@ class VideoTransformer(nn.Module):
 
     def forward(self,
                 src: Tensor,
-                tgt: Optional[Tensor, List[Tensor]],
+                tgt: Tensor,
                 src_mask: Tensor,
-                tgt_mask: Optional[Tensor, List[Tensor]],
+                tgt_mask: Tensor,
                 src_padding_mask: Tensor,
-                tgt_padding_mask: Optional[Tensor, List[Tensor]],):
+                tgt_padding_mask: Tensor):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
 
         # 如果是单个caption，则直接transformer
