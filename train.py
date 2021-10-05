@@ -300,7 +300,7 @@ if __name__ == "__main__":
         writer.add_scalar("train_loss", train_loss, step=epoch)
         writer.add_scalar("val_loss", val_loss, step=epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
-        writer.add_text("text", sample_text + "\n" + result_text, step=epoch)
+        writer.add_text("text", sample_text + " | " + result_text, step=epoch)
         lr_scheduler.step(val_loss)
 
         # early stopping
