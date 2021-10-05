@@ -97,7 +97,7 @@ class MSRVTT(Dataset):
             return v_feat, vid if self.include_id is True else v_feat
 
     def _getitem_by_caption(self, index):
-        v_path, caption = self.cap_vid_list[index]
+        caption, v_path = self.cap_vid_list[index]
         v_feat = torch.tensor(np.load(str(v_path)), dtype=torch.float)
         v_feat = v_feat.transpose(0, 1) if v_feat.shape[0] > v_feat.shape[1] else v_feat
         caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
@@ -115,7 +115,7 @@ class MSRVTT(Dataset):
 
     def get_a_sample(self, index=None, ori_video_dir=None):
         return_dict = {}
-        index = random.randrange(0, len(self)) if index is None else index
+        index = random.randrange(0, len(self.video_feat_list)) if index is None else index
 
         video_path = self.video_feat_list[index]
         vid = video_path.stem
