@@ -38,9 +38,9 @@ class Opt:
     val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = None  # r"data/MSRVTT_trainval"
     # train
-    batch_size = 32
+    batch_size = 8
     lr = 1e-4
-    max_len = 20
+    max_len = 30
     learning_rate_patience = 5
     early_stopping_patience = 10
     # model
@@ -163,9 +163,15 @@ def collate_fn(data):
     for feat_dict in feat_dicts:
         for name, ts in feat_dict.items():
             feat_names.add(name)
-            feat_len_dict[name].append(ts.shape[0]) if name in feat_len_dict else feat_len_dict[name] = [ts.shape[0]]
+            if name in feat_len_dict:
+                feat_len_dict[name].append(ts.shape[0])
+            else:
+                feat_len_dict[name] = [ts.shape[0]]
             feat_dim_dict[name] = ts.shape[-1]
-            feat_unpad_dict[name].append(ts) if name in feat_unpad_dict else feat_len_dict[name] = [ts]
+            if name in feat_unpad_dict:
+                feat_unpad_dict[name].append(ts)
+            else:
+                feat_len_dict[name] = [ts]
     feat_maxlen_dict = {k: max(v) for k, v in feat_len_dict.items()}  # {"resnet152": 6, "CLIP": 6}
     # 再pad
     feat_padded_dict = {}  # {"resnet152": [Tensor, Tensor], "CLIP": [Tensor, Tensor]}
