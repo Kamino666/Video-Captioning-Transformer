@@ -29,11 +29,11 @@ device = torch.device("cuda", local_rank)
 class Opt:
     # data
     train_video_dirs = {"resnet152": "data/msrvtt_resnet152_fps3_feats/train",
-                        "CLIP": "data/MSRVTT_CLIP_FEATURES/train_feats",
+                        "CLIP": "data/MSRVTT-CLIP-FEATURES/train_feats",
                         "swin": "data/msrvtt_swin_base/train"}
     train_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     val_video_dirs = {"resnet152": "data/msrvtt_resnet152_fps3_feats/val",
-                      "CLIP": "data/MSRVTT_CLIP_FEATURES/val_feats",
+                      "CLIP": "data/MSRVTT-CLIP-FEATURES/val_feats",
                       "swin": "data/msrvtt_swin_base/val"}
     val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = None  # r"data/MSRVTT_trainval"
@@ -241,8 +241,8 @@ if __name__ == "__main__":
 
     # dataloader
     train_iter = MultiModalMSRVTT(opt.train_video_dirs, opt.train_annotation_path, tokenizer=tokenizer)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_iter)
-    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True,
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_iter, shuffle=True)
+    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn,
                                   sampler=train_sampler)
     val_iter = MultiModalMSRVTT(opt.val_video_dirs, opt.val_annotation_path, tokenizer=tokenizer, mode="validate")
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_iter)

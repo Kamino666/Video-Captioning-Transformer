@@ -115,6 +115,7 @@ class MMVideoTransformer(nn.Module):
         self.device = device
 
         tokenizer = AutoTokenizer.from_pretrained(bert_type)
+        self.tokenizer = tokenizer
         pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
         vocab_size = tokenizer.vocab_size
         self.tgt_to_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)

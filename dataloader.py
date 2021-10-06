@@ -195,7 +195,7 @@ class MultiModalMSRVTT(Dataset):
 
         # load path of features
         self.vid2path = {}
-        for feat_name, feat_dir in video_dirs:
+        for feat_name, feat_dir in video_dirs.items():
             feat_dir = plb.Path(feat_dir)
             feat_paths = feat_dir.glob("*")
             for feat_path in feat_paths:
@@ -221,7 +221,7 @@ class MultiModalMSRVTT(Dataset):
                 raise ValueError(f"{v_dir} is not a directory")
 
     def __getitem__(self, item):
-        if self.mode is not "test":
+        if self.mode != "test":
             caption, vid = self.cap_vid_pair[item]
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
             feats_dict = {}
@@ -238,7 +238,7 @@ class MultiModalMSRVTT(Dataset):
             return feats_dict, vid
 
     def __len__(self):
-        return len(self.cap_vid_pair) if self.mode is not "test" else len(self.vid2path)
+        return len(self.cap_vid_pair) if self.mode != "test" else len(self.vid2path)
 
     def get_a_sample(self, index=None, ori_video_dir=None):
         index = random.randrange(0, len(self)) if index is None else index

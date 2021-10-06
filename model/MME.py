@@ -57,7 +57,7 @@ class MultiModalEmbedding(Module):
         """
         super(MultiModalEmbedding, self).__init__()
         self.device = device
-        assert set(feat_dims.keys()).issubset({"scene", "motion"})
+        # assert set(feat_dims.keys()).issubset({"scene", "motion"})
         self.input_embeddings = nn.ModuleDict({
             k: Linear(v, d_model) for k, v in feat_dims.items()
         })

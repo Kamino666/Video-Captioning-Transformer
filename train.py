@@ -27,7 +27,7 @@ class Opt:
     val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = r"data/MSRVTT_trainval"
     # train
-    batch_size = 32
+    batch_size = 64
     lr = 1e-4
     max_len = 20
     learning_rate_patience = 5
@@ -44,7 +44,7 @@ class Opt:
     epoch_num = 30
     use_bert = False
     # save & load
-    save_freq = 50
+    save_freq = 5
     load_model = None
     model_save_dir = "./checkpoint"
     _extra_msg = "MSRVTT&R152"  # Dataset|Bert|pretrained

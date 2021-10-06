@@ -115,12 +115,8 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
             for v in vs:
                 bleu_ref_vs.append(word_tokenize(v))
             bleu_ref.append(bleu_ref_vs)
-        # debug
-        for pred in bleu_pred:
-            if len(pred) <= 4:
-                print(pred)
         return round(
-            corpus_bleu(bleu_ref, bleu_pred, weights=(0, 0, 0, 1), smoothing_function=SmoothingFunction().method1), 4
+            corpus_bleu(bleu_ref, bleu_pred, weights=(0, 0, 0, 1), smoothing_function=SmoothingFunction().method2), 4
         )
 
     def rouge_l_metric_rs():
