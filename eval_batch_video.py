@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from tqdm import tqdm
 from utils import Meter
+from nltk.translate.meteor_score import meteor_score
+from rouge_score import rouge_scorer
 
 device = torch.device("cuda")
 
@@ -133,6 +135,20 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         meteor = m.compute()
         return meteor['rougeL'].mid.recall
 
+    def rouge_l_metric_rs():
+        m = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
+        rouge_ref = [i for i in video2caption.values()]
+        rouge_pred = [i for i in vid2result.values()]
+        avg_meter = Meter(mode="avg")
+        for i in range(len(rouge_ref)):
+            max_meter = Meter(mode="max")
+            for j in range(len(rouge_ref[i])):
+                max_meter.add(
+                    m.score(rouge_ref[i][j], rouge_pred[i])["rougeL"].recall
+                )
+            avg_meter.add(max_meter.pop())
+        return avg_meter.pop()
+
     def meteor_metric(m):
         meteor_ref = [i for i in video2caption.values()]
         meteor_pred = [i for i in vid2result.values()]
@@ -146,16 +162,28 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         # meteor = m.compute()
         return avg_meter.get()
 
+    def meteor_metric_nltk():
+        meteor_ref = [i for i in video2caption.values()]
+        meteor_pred = [i for i in vid2result.values()]
+        avg_meter = Meter(mode="avg")
+        for i in range(len(meteor_ref)):
+            res = round(meteor_score(meteor_ref[i], meteor_pred[i]), 4)
+            avg_meter.add(res)
+        return avg_meter.get()
+
     if metrics is None:
         metrics = ["bleu", "meteor", "rouge"]
     video2caption = test_iter.video2caption
     vid2result = greedy_decode_dataset(model, test_loader)
     if "bleu" in metrics:
+        print("Bleu score: ", end="")
         print(bleu_metric(load_metric("./metric_config/bleu.py")))
     if "meteor" in metrics:
-        print(meteor_metric(load_metric("./metric_config/meteor.py")))
+        print("METEOR score: ", end="")
+        print(meteor_metric_nltk())
     if "rouge" in metrics:
-        print(rouge_l_metric(load_metric("./metric_config/rouge.py")))
+        print("ROUGE score: ", end="")
+        print(rouge_l_metric_rs())
 
 
 if __name__ == "__main__":
