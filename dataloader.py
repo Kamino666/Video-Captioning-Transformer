@@ -227,18 +227,22 @@ class MultiModalMSRVTT(Dataset):
             feats_dict = {}
             v_paths = self.vid2path[vid]
             for feat_name, v_path in v_paths.items():
-                feats_dict[feat_name] = torch.from_numpy(np.load(v_path))
+                feat = torch.from_numpy(np.load(v_path))
+                if feat.shape[0] > feat.shape[1]:
+                    feats_dict[feat_name] = feat.transpose(0, 1)
+                else:
+                    feats_dict[feat_name] = feat
             return feats_dict, caption, vid
         else:
             feats_dict = {}
             vid = list(self.vid2path.keys())[item]
             v_paths = self.vid2path[vid]
-            for feat_name, v_path in v_paths:
+            for feat_name, v_path in v_paths.items():
                 feat = torch.from_numpy(np.load(v_path))
                 if feat.shape[0] > feat.shape[1]:
                     feats_dict[feat_name] = feat.transpose(0, 1)
                 else:
-                    feat_dict[feat_name] = feat
+                    feats_dict[feat_name] = feat
             return feats_dict, vid
 
     def __len__(self):

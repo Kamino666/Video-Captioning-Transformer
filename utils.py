@@ -193,11 +193,14 @@ class Meter:
         return rslt
 
 def show_input_shape(**kwargs):
-    for name, arg in kwargs:
+    print("\n***************************************")
+    for name, arg in kwargs.items():
         if type(arg) is torch.Tensor:
             print(f"{name}: {arg.shape}")
         elif type(arg) is dict:
             print(f"{name}: ", end="")
-            for k, v in arg:
+            for k, v in arg.items():
                 print(f"{k}:{v.shape}", end="  ")
             print("")
+    print("***************************************\n")
+

@@ -23,7 +23,7 @@ class GlobalAggregation(Module):
         :param x: N,T,E
         :return:
         """
-        if "pooling" in self.method:
+        if self.method == "maxpooling" or "avgpooling":
             return self.agg(x.transpose(1, 2)).transpose(1, 2)
 
 
@@ -70,6 +70,7 @@ class MultiModalEmbedding(Module):
     def forward(self, feats_dict: dict, feats_padding_mask_dict: dict):
         features, lengths, feats_padding_masks = [], [], []
         for feat_name, feats, padding_masks in zip(feats_dict.keys(), feats_dict.values(), feats_padding_mask_dict.values()):
+            
             # B T E -> B T M  # M meas d_model
             feats = self.input_embeddings[feat_name](feats)
             # B 1 M

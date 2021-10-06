@@ -48,11 +48,11 @@ class Opt:
     enc_layer_num = 4
     dec_layer_num = 4
     head_num = 8
-    feat_dims = {"resnet152": 2048, "CLIP": 512, "swin": 768}
+    feat_dims = {"resnet152": 2048, "CLIP": 512, "swin": 1024}
     d_model = 512
     dim_feedforward = 2048
     dropout = 0.3
-    agg_method = "avg"
+    agg_method = "avgpooling"
     epoch_num = 30
     # save & load
     save_freq = 50
@@ -76,9 +76,10 @@ def train_epoch(model, optimizer, train_dataloader):
 
         tgt_input = tgt[:, :-1]  # N T-1
         tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1]).to(device)
-
-        show_input_shape(feats_dict=feats_dict, feats_padding_mask_dict=feat_mask_dict,
-                         tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask, )
+        
+        "DEBUG"
+        #show_input_shape(feats_dict=feats_dict, feats_padding_mask_dict=feat_mask_dict,
+        #                 tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask, )
         logits = model(feats_dict=feats_dict, feats_padding_mask_dict=feat_mask_dict,
                        tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask, )  # N T-1 vocab_size
 
