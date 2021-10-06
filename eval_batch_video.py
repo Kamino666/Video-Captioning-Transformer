@@ -19,7 +19,7 @@ class EvalOpt:
     video_feat_dir = r"data/msrvtt_resnet152_fps3_feats/val"
     annotation_file = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     tokenizer_type = "bert-base-uncased"
-    model_path = r"./checkpoint/"
+    model_path = r"./checkpoint/b64_lr0001_dp03_emb512_e4_d4_hd8_hi2048_MSRVTT&R152_earlystop.pth"
     max_len = 30
     batch_size = 32
     # model
@@ -104,30 +104,6 @@ def greedy_decode_dataset(model, test_loader):
 
 
 def metric_eval(model, test_loader, test_iter, metrics=None):
-    def bleu_metric(m):
-        import re
-        bleu_pred = []
-        for k, v in vid2result.items():
-            # tokenize
-            v = v.lower()
-            v = re.sub(r'[~\\/():;]', ' ', v)  # .!,?
-            v = v.replace(".", " . ").replace("!", " ! ").replace("?", " ? ").replace(",", " , ")
-            bleu_pred.append(v.split())
-        bleu_ref = []
-        for k, vs in video2caption.items():
-            bleu_ref_vs = []
-            for v in vs:
-                # tokenize
-                v = v.lower()
-                v = re.sub(r'[~\\/():;]', ' ', v)  # .!,?
-                v = v.replace(".", " . ").replace("!", " ! ").replace("?", " ? ").replace(",", " , ")
-                bleu_ref_vs.append(v.split())
-            bleu_ref.append(bleu_ref_vs)
-        bleu_1 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=1)
-        bleu_2 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=2)
-        bleu_3 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=3)
-        bleu_4 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=4)
-        return bleu_1["bleu"], bleu_2["bleu"], bleu_3["bleu"], bleu_4["bleu"]
 
     def bleu_metric_nltk():
         # tokenize
@@ -142,18 +118,9 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
             bleu_ref.append(bleu_ref_vs)
         # calculate
         avg_meter = Meter(mode="avg")
-        for refs, pred in zip(bleu_pred, bleu_ref):
+        for refs, pred in zip(bleu_ref, bleu_pred):
             avg_meter.add(sentence_bleu(refs, pred))
         return round(avg_meter.get(), 4)
-
-    def rouge_l_metric(m):
-        rouge_ref = [i for i in video2caption.values()]
-        rouge_pred = [i for i in vid2result.values()]
-        for i in range(len(rouge_ref)):
-            for j in range(len(rouge_ref[i])):
-                m.add(prediction=rouge_pred[i], reference=rouge_ref[i][j])
-        meteor = m.compute()
-        return meteor['rougeL'].mid.recall
 
     def rouge_l_metric_rs():
         m = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
@@ -169,18 +136,6 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
             avg_meter.add(max_meter.pop())
         return round(avg_meter.pop(), 4)
 
-    def meteor_metric(m):
-        meteor_ref = [i for i in video2caption.values()]
-        meteor_pred = [i for i in vid2result.values()]
-        avg_meter = Meter(mode="avg")
-        for i in range(len(meteor_ref)):
-            max_meter = Meter(mode="max")
-            for j in range(len(meteor_ref[i])):
-                m.add(prediction=meteor_pred[i], reference=meteor_ref[i][j])
-                max_meter.add(m.compute()["meteor"])
-            avg_meter.add(max_meter.get())
-        # meteor = m.compute()
-        return avg_meter.get()
 
     def meteor_metric_nltk():
         meteor_ref = [i for i in video2caption.values()]
