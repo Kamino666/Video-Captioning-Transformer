@@ -213,7 +213,7 @@ class MultiModalMSRVTT(Dataset):
                 if video2split[caption["video_id"]] != mode:
                     continue
                 else:
-                    self.cap_vid_pair.append((caption["video_id"], caption["caption"]))
+                    self.cap_vid_pair.append((caption["caption"], caption["video_id"]))
 
     def _validate_input(self, video_dirs):
         for v_dir in video_dirs:
@@ -226,7 +226,7 @@ class MultiModalMSRVTT(Dataset):
             caption = self.tokenizer.encode(caption, return_tensors="pt").squeeze()
             feats_dict = {}
             v_paths = self.vid2path[vid]
-            for feat_name, v_path in v_paths:
+            for feat_name, v_path in v_paths.items():
                 feats_dict[feat_name] = torch.from_numpy(np.load(v_path))
             return feats_dict, caption, vid
         else:
@@ -234,7 +234,11 @@ class MultiModalMSRVTT(Dataset):
             vid = list(self.vid2path.keys())[item]
             v_paths = self.vid2path[vid]
             for feat_name, v_path in v_paths:
-                feats_dict[feat_name] = torch.from_numpy(np.load(v_path))
+                feat = torch.from_numpy(np.load(v_path))
+                if feat.shape[0] > feat.shape[1]:
+                    feats_dict[feat_name] = feat.transpose(0, 1)
+                else:
+                    feat_dict[feat_name] = feat
             return feats_dict, vid
 
     def __len__(self):

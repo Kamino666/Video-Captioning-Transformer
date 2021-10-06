@@ -71,12 +71,13 @@ def train_epoch(model, optimizer, train_dataloader):
     for feats_dict, text_ts, feat_mask_dict, text_mask_ts in tqdm(train_dataloader):
         tgt = text_ts.to(device)
         tgt_padding_mask = text_mask_ts.to(device)[:, :-1]
-        feats_dict = {k: v.to(device) for k, v in feats_dict}
-        feat_mask_dict = {k: v.to(device) for k, v in feat_mask_dict}
+        feats_dict = {k: v.to(device) for k, v in feats_dict.items()}
+        feat_mask_dict = {k: v.to(device) for k, v in feat_mask_dict.items()}
 
         tgt_input = tgt[:, :-1]  # N T-1
         tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1]).to(device)
-
+        
+        
         logits = model(feats_dict=feats_dict, feats_padding_mask_dict=feat_mask_dict,
                        tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,)  # N T-1 vocab_size
 
@@ -99,8 +100,8 @@ def evaluate(model, val_dataloader):
     for feats_dict, text_ts, feat_mask_dict, text_mask_ts in tqdm(train_dataloader):
         tgt = text_ts.to(device)
         tgt_padding_mask = text_mask_ts.to(device)[:, :-1]
-        feats_dict = {k: v.to(device) for k, v in feats_dict}
-        feat_mask_dict = {k: v.to(device) for k, v in feat_mask_dict}
+        feats_dict = {k: v.to(device) for k, v in feats_dict.items()}
+        feat_mask_dict = {k: v.to(device) for k, v in feat_mask_dict.items()}
 
         tgt_input = tgt[:, :-1]  # N T-1
         tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1]).to(device)
@@ -167,11 +168,11 @@ def collate_fn(data):
                 feat_len_dict[name].append(ts.shape[0])
             else:
                 feat_len_dict[name] = [ts.shape[0]]
-            feat_dim_dict[name] = ts.shape[-1]
+            feat_dim_dict[name] = ts.shape[1]
             if name in feat_unpad_dict:
                 feat_unpad_dict[name].append(ts)
             else:
-                feat_len_dict[name] = [ts]
+                feat_unpad_dict[name] = [ts]
     feat_maxlen_dict = {k: max(v) for k, v in feat_len_dict.items()}  # {"resnet152": 6, "CLIP": 6}
     # 再pad
     feat_padded_dict = {}  # {"resnet152": [Tensor, Tensor], "CLIP": [Tensor, Tensor]}
