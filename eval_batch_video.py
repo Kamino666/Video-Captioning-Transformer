@@ -7,7 +7,7 @@ from transformers import AutoTokenizer
 from tqdm import tqdm
 from utils import Meter
 from nltk.translate.meteor_score import meteor_score
-from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
+from nltk.translate.bleu_score import SmoothingFunction, corpus_bleu
 from nltk.tokenize import word_tokenize
 from rouge_score import rouge_scorer
 
@@ -104,7 +104,6 @@ def greedy_decode_dataset(model, test_loader):
 
 
 def metric_eval(model, test_loader, test_iter, metrics=None):
-
     def bleu_metric_nltk():
         # tokenize
         bleu_pred = []
@@ -120,8 +119,9 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         for pred in bleu_pred:
             if len(pred) <= 4:
                 print(pred)
-        return round(corpus_bleu(bleu_ref, bleu_pred, weights=(0,0,0,1)), 4)
-
+        return round(
+            corpus_bleu(bleu_ref, bleu_pred, weights=(0, 0, 0, 1), smoothing_function=SmoothingFunction().method1), 4
+        )
 
     def rouge_l_metric_rs():
         m = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
@@ -136,7 +136,6 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
                 )
             avg_meter.add(max_meter.pop())
         return round(avg_meter.pop(), 4)
-
 
     def meteor_metric_nltk():
         meteor_ref = [i for i in video2caption.values()]
