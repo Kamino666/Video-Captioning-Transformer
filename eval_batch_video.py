@@ -16,21 +16,22 @@ device = torch.device("cuda")
 
 class EvalOpt:
     # eval
-    video_feat_dir = r"data/MSRVTT-CLIP-FEATURES/val_feats"
+    video_feat_dir = r"data/msrvtt_resnet152_fps3_feats/val"
     annotation_file = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
     tokenizer_type = "bert-base-uncased"
-    model_path = r"./checkpoint/b32_msrvttCLIP_enc1_dec1_head4_emb512_hid1024_epoch100.pth"
+    model_path = r"./checkpoint/"
     max_len = 30
-    batch_size = 16
+    batch_size = 32
     # model
     bert_type = "bert-base-uncased"
-    enc_layer_num = 1
-    dec_layer_num = 1
-    head_num = 4
-    feat_size = 512
-    emb_dim = 768
-    hid_dim = 1024
-    dropout = 0.1
+    enc_layer_num = 4
+    dec_layer_num = 4
+    head_num = 8
+    feat_size = 2048
+    emb_dim = 512
+    hid_dim = 2048
+    dropout = 0.3
+    epoch_num = 30
     use_bert = False
 
 
