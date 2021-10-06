@@ -164,3 +164,30 @@ def generate_square_subsequent_mask(sz):
     mask = (torch.triu(torch.ones((sz, sz))) == 1).transpose(0, 1)
     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
     return mask
+
+
+class Meter:
+    def __init__(self, mode="avg"):
+        assert mode in ["avg", "max"]
+        self.mode = mode
+        self.count = 0
+        self.sum = 0
+
+    def add(self, x):
+        if self.mode == "avg":
+            self.sum += x
+            self.count += 1
+        elif self.mode == "max":
+            self.sum = x if x > self.sum else self.sum
+
+    def get(self):
+        if self.mode == "avg":
+            return self.sum / self.count
+        elif self.mode == "max":
+            return self.sum
+
+    def pop(self):
+        rslt = self.get()
+        self.count = 0
+        self.sum = 0
+        return rslt

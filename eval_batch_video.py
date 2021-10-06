@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from tqdm import tqdm
+from utils import Meter
 
 device = torch.device("cuda")
 
@@ -26,7 +27,6 @@ class EvalOpt:
     emb_dim = 768
     hid_dim = 1024
     dropout = 0.1
-    epoch_num = 300
     use_bert = False
 
 
@@ -123,6 +123,7 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         bleu_3 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=3)
         bleu_4 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=4)
         return bleu_1["bleu"], bleu_2["bleu"], bleu_3["bleu"], bleu_4["bleu"]
+
     def rouge_l_metric(m):
         rouge_ref = [i for i in video2caption.values()]
         rouge_pred = [i for i in vid2result.values()]
@@ -131,14 +132,20 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
                 m.add(prediction=rouge_pred[i], reference=rouge_ref[i][j])
         meteor = m.compute()
         return meteor['rougeL'].mid.recall
+
     def meteor_metric(m):
         meteor_ref = [i for i in video2caption.values()]
         meteor_pred = [i for i in vid2result.values()]
+        avg_meter = Meter(mode="avg")
         for i in range(len(meteor_ref)):
+            max_meter = Meter(mode="max")
             for j in range(len(meteor_ref[i])):
                 m.add(prediction=meteor_pred[i], reference=meteor_ref[i][j])
-        meteor = m.compute()
-        return meteor['meteor']
+                max_meter.add(m.compute()["meteor"])
+            avg_meter.add(max_meter.get())
+        # meteor = m.compute()
+        return avg_meter.get()
+
     if metrics is None:
         metrics = ["bleu", "meteor", "rouge"]
     video2caption = test_iter.video2caption
@@ -163,7 +170,8 @@ if __name__ == "__main__":
                                    bert_type=opt.bert_type,
                                    dropout=opt.dropout,
                                    use_bert=opt.use_bert,
-                                   dim_feedforward=opt.hid_dim)
+                                   dim_feedforward=opt.hid_dim,
+                                   device=device)
     transformer.load_state_dict(torch.load(opt.model_path))
     transformer.eval()
     transformer = transformer.to(device)
@@ -172,9 +180,6 @@ if __name__ == "__main__":
     opt.start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     opt.end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
-    test_iter = MSRVTT(opt.video_feat_dir,
-                       opt.annotation_file,
-                       tokenizer=tokenizer, mode="validate", include_id=True)
+    test_iter = MSRVTT(opt.video_feat_dir, opt.annotation_file, tokenizer=tokenizer, mode="validate")
     test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
-    metric_eval(transformer, test_dataloader, test_iter, metrics=["rouge"])
-
+    metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor", "bleu"])
