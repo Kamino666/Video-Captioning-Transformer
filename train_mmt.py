@@ -15,7 +15,7 @@ from model.model import MMVideoTransformer
 from tqdm import tqdm
 from timeit import default_timer as timer
 import re
-from utils import EarlyStopping
+from utils import EarlyStopping, show_input_shape
 import os
 
 # device = torch.device("cuda")
@@ -76,10 +76,11 @@ def train_epoch(model, optimizer, train_dataloader):
 
         tgt_input = tgt[:, :-1]  # N T-1
         tgt_mask = generate_square_subsequent_mask(tgt_input.shape[1]).to(device)
-        
-        
+
+        show_input_shape(feats_dict=feats_dict, feats_padding_mask_dict=feat_mask_dict,
+                         tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask, )
         logits = model(feats_dict=feats_dict, feats_padding_mask_dict=feat_mask_dict,
-                       tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask,)  # N T-1 vocab_size
+                       tgt=tgt_input, tgt_mask=tgt_mask, tgt_padding_mask=tgt_padding_mask, )  # N T-1 vocab_size
 
         optimizer.zero_grad()
 
