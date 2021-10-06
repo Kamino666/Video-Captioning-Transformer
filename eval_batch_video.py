@@ -7,6 +7,8 @@ from transformers import AutoTokenizer
 from tqdm import tqdm
 from utils import Meter
 from nltk.translate.meteor_score import meteor_score
+from nltk.translate.bleu_score import sentence_bleu
+from nltk.tokenize import word_tokenize
 from rouge_score import rouge_scorer
 
 device = torch.device("cuda")
@@ -126,6 +128,23 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         bleu_4 = m.compute(predictions=bleu_pred, references=bleu_ref, max_order=4)
         return bleu_1["bleu"], bleu_2["bleu"], bleu_3["bleu"], bleu_4["bleu"]
 
+    def bleu_metric_nltk():
+        # tokenize
+        bleu_pred = []
+        for k, v in vid2result.items():
+            bleu_pred.append(word_tokenize(v))
+        bleu_ref = []
+        for k, vs in video2caption.items():
+            bleu_ref_vs = []
+            for v in vs:
+                bleu_ref_vs.append(word_tokenize(v))
+            bleu_ref.append(bleu_ref_vs)
+        # calculate
+        avg_meter = Meter(mode="avg")
+        for refs, pred in zip(bleu_pred, bleu_ref):
+            avg_meter.add(sentence_bleu(refs, pred))
+        return round(avg_meter.get(), 4)
+
     def rouge_l_metric(m):
         rouge_ref = [i for i in video2caption.values()]
         rouge_pred = [i for i in vid2result.values()]
@@ -147,7 +166,7 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
                     m.score(rouge_ref[i][j], rouge_pred[i])["rougeL"].recall
                 )
             avg_meter.add(max_meter.pop())
-        return avg_meter.pop()
+        return round(avg_meter.pop(), 4)
 
     def meteor_metric(m):
         meteor_ref = [i for i in video2caption.values()]
@@ -167,9 +186,9 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         meteor_pred = [i for i in vid2result.values()]
         avg_meter = Meter(mode="avg")
         for i in range(len(meteor_ref)):
-            res = round(meteor_score(meteor_ref[i], meteor_pred[i]), 4)
+            res = meteor_score(meteor_ref[i], meteor_pred[i])
             avg_meter.add(res)
-        return avg_meter.get()
+        return round(avg_meter.get(), 4)
 
     if metrics is None:
         metrics = ["bleu", "meteor", "rouge"]
@@ -177,7 +196,7 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
     vid2result = greedy_decode_dataset(model, test_loader)
     if "bleu" in metrics:
         print("Bleu score: ", end="")
-        print(bleu_metric(load_metric("./metric_config/bleu.py")))
+        print(bleu_metric_nltk())
     if "meteor" in metrics:
         print("METEOR score: ", end="")
         print(meteor_metric_nltk())
@@ -210,4 +229,4 @@ if __name__ == "__main__":
     opt.pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
     test_iter = MSRVTT(opt.video_feat_dir, opt.annotation_file, tokenizer=tokenizer, mode="validate")
     test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
-    metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor", "bleu"])
+    metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor", "bleu", "rouge"])
