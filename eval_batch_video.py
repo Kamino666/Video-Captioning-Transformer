@@ -7,7 +7,7 @@ from transformers import AutoTokenizer
 from tqdm import tqdm
 from utils import Meter
 from nltk.translate.meteor_score import meteor_score
-from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
 from nltk.tokenize import word_tokenize
 from rouge_score import rouge_scorer
 
@@ -116,11 +116,12 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
             for v in vs:
                 bleu_ref_vs.append(word_tokenize(v))
             bleu_ref.append(bleu_ref_vs)
-        # calculate
-        avg_meter = Meter(mode="avg")
-        for refs, pred in zip(bleu_ref, bleu_pred):
-            avg_meter.add(sentence_bleu(refs, pred))
-        return round(avg_meter.get(), 4)
+        # debug
+        for pred in bleu_pred:
+            if len(pred) <= 4:
+                print(pred)
+        return round(corpus_bleu(bleu_ref, bleu_pred, weights=(0,0,0,1)), 4)
+
 
     def rouge_l_metric_rs():
         m = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
@@ -183,6 +184,6 @@ if __name__ == "__main__":
     opt.start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     opt.end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
-    test_iter = MSRVTT(opt.video_feat_dir, opt.annotation_file, tokenizer=tokenizer, mode="validate")
+    test_iter = MSRVTT(opt.video_feat_dir, opt.annotation_file, tokenizer=tokenizer, mode="validate", by_caption=False)
     test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
     metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor", "bleu", "rouge"])
