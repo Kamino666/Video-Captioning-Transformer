@@ -1,11 +1,14 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from .Embedding import PositionalEmbedding
 from .MME import MultiModalEmbedding
 from torch.nn import Transformer
 from transformers import BertModel, AutoTokenizer
+
+import random
 
 
 # Seq2Seq Network
@@ -21,6 +24,7 @@ class VideoTransformer(nn.Module):
                  use_bert: bool = True,
                  dim_feedforward: int = 512,
                  dropout: float = 0.1,
+                 scheduled_sampling=False,
                  device: torch.device = torch.device("cuda")
                  ):
         super(VideoTransformer, self).__init__()
@@ -44,6 +48,7 @@ class VideoTransformer(nn.Module):
         self.emb_size = emb_size
         self.device = device
         self.use_bert = use_bert
+        self.scheduled_sampling = scheduled_sampling
 
     def forward(self,
                 src: Tensor,
@@ -51,15 +56,40 @@ class VideoTransformer(nn.Module):
                 src_mask: Tensor,
                 tgt_mask: Tensor,
                 src_padding_mask: Tensor,
-                tgt_padding_mask: Tensor):
+                tgt_padding_mask: Tensor,
+                scheduled_sampling_rate=0.5):
         src_emb = self.positional_encoding(self.src_to_emb(src))  # src: torch.Size([16, 768, 20])
 
         # 如果是单个caption，则直接transformer
         if type(tgt) == Tensor:
-            tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
-            outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
-                                    src_padding_mask, tgt_padding_mask, src_padding_mask)
-            return self.generator(outs)
+            if self.scheduled_sampling is False:
+                tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
+                outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
+                                        src_padding_mask, tgt_padding_mask, src_padding_mask)
+                return self.generator(outs)
+            else:
+                tgt_emb = self.tgt_to_emb(tgt)  # B T E
+                memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_padding_mask)
+                # pass 1
+                det_memory, det_tgt_emb = memory.detach(), tgt_emb.detach()
+                output_pass1 = self.decoder(self.positional_encoding(det_tgt_emb), det_memory,
+                                            tgt_mask=tgt_mask,
+                                            tgt_key_padding_mask=tgt_padding_mask,
+                                            memory_key_padding_mask=src_padding_mask)
+                output_pass1 = F.softmax(self.generator(output_pass1), dim=2)  # B T vocab_size
+                output_pass1 = torch.max(output_pass1, dim=2, keepdim=True).indices  # B T 1
+                pass1_emb = self.tgt_to_emb(output_pass1)  # B T E
+                # mix
+                T = tgt_emb.shape[1]
+                sample_idx = random.sample(range(T), scheduled_sampling_rate*T)
+                for idx in sample_idx:
+                    tgt_emb[:, idx] = pass1_emb[:, idx]
+                # pass 2
+                output_pass2 = self.decoder(self.positional_encoding(tgt_emb), memory,
+                                            tgt_mask=tgt_mask,
+                                            tgt_key_padding_mask=tgt_padding_mask,
+                                            memory_key_padding_mask=src_padding_mask)
+                return self.generator(output_pass2)
         # 如果是多个caption，则依次decode出结果
         elif type(tgt) == list:
             # 先得到encoder的输出
@@ -129,7 +159,7 @@ class MMVideoTransformer(nn.Module):
             nn.LayerNorm(d_model)
         )
         self.mmt_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation,batch_first=True),
+            nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, batch_first=True),
             num_decoder_layers,
             nn.LayerNorm(d_model)
         )
@@ -156,4 +186,3 @@ class MMVideoTransformer(nn.Module):
         )
 
         return self.generator(output)
-
