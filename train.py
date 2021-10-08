@@ -21,23 +21,24 @@ device = torch.device("cuda")
 
 class Opt:
     # data
-    train_feat_dir = r"data/msrvtt_resnet152_fps3_feats/train"
+    train_feat_dir = r"data/msrvtt_I3Drgb_fps15_feats/train"
     train_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
-    val_feat_dir = r"data/msrvtt_resnet152_fps3_feats/val"
+    val_feat_dir = r"data/msrvtt_I3Drgb_fps15_feats/val"
     val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
-    raw_video_dir = r"data/MSRVTT_trainval"
+    raw_video_dir = None
     # train
     batch_size = 64
     lr = 1e-4
-    max_len = 20
+    max_len = 30
     learning_rate_patience = 5
     early_stopping_patience = 10
+    scheduled_sampling = True
     # model
     bert_type = "bert-base-uncased"
     enc_layer_num = 4
     dec_layer_num = 4
     head_num = 8
-    feat_size = 2048
+    feat_size = 1024
     emb_dim = 512
     hid_dim = 2048
     dropout = 0.3
@@ -47,7 +48,7 @@ class Opt:
     save_freq = 5
     load_model = None
     model_save_dir = "./checkpoint"
-    _extra_msg = "MSRVTT&R152"  # Dataset|Bert|pretrained
+    _extra_msg = "MSRVTT&I3Drgb&sche"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
 
@@ -243,6 +244,7 @@ if __name__ == "__main__":
                                    dropout=opt.dropout,
                                    use_bert=opt.use_bert,
                                    dim_feedforward=opt.hid_dim,
+                                   scheduled_sampling=opt.scheduled_sampling,
                                    device=device)
     if opt.load_model is None:
         st_epoch = 0
@@ -273,7 +275,7 @@ if __name__ == "__main__":
                                    verbose=True,
                                    path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
     # visulize & log
-    writer = LogWriter(f"./log/resnet/{opt.training_name}")
+    writer = LogWriter(f"./log/I3D/{opt.training_name}")
 
     # dataloader
     train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)

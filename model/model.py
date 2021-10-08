@@ -69,26 +69,26 @@ class VideoTransformer(nn.Module):
                 return self.generator(outs)
             else:
                 tgt_emb = self.tgt_to_emb(tgt)  # B T E
-                memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_padding_mask)
+                memory = self.transformer.encoder(src_emb, mask=src_mask, src_key_padding_mask=src_padding_mask)
                 # pass 1
                 det_memory, det_tgt_emb = memory.detach(), tgt_emb.detach()
-                output_pass1 = self.decoder(self.positional_encoding(det_tgt_emb), det_memory,
-                                            tgt_mask=tgt_mask,
-                                            tgt_key_padding_mask=tgt_padding_mask,
-                                            memory_key_padding_mask=src_padding_mask)
+                output_pass1 = self.transformer.decoder(self.positional_encoding(det_tgt_emb), det_memory,
+                                                        tgt_mask=tgt_mask,
+                                                        tgt_key_padding_mask=tgt_padding_mask,
+                                                        memory_key_padding_mask=src_padding_mask)
                 output_pass1 = F.softmax(self.generator(output_pass1), dim=2)  # B T vocab_size
-                output_pass1 = torch.max(output_pass1, dim=2, keepdim=True).indices  # B T 1
+                output_pass1 = torch.max(output_pass1, dim=2).indices  # B T 1
                 pass1_emb = self.tgt_to_emb(output_pass1)  # B T E
                 # mix
                 T = tgt_emb.shape[1]
-                sample_idx = random.sample(range(T), scheduled_sampling_rate*T)
+                sample_idx = random.sample(range(T), int(scheduled_sampling_rate*T))
                 for idx in sample_idx:
                     tgt_emb[:, idx] = pass1_emb[:, idx]
                 # pass 2
-                output_pass2 = self.decoder(self.positional_encoding(tgt_emb), memory,
-                                            tgt_mask=tgt_mask,
-                                            tgt_key_padding_mask=tgt_padding_mask,
-                                            memory_key_padding_mask=src_padding_mask)
+                output_pass2 = self.transformer.decoder(self.positional_encoding(tgt_emb), memory,
+                                                        tgt_mask=tgt_mask,
+                                                        tgt_key_padding_mask=tgt_padding_mask,
+                                                        memory_key_padding_mask=src_padding_mask)
                 return self.generator(output_pass2)
         # 如果是多个caption，则依次decode出结果
         elif type(tgt) == list:
