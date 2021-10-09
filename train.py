@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from transformers import AutoTokenizer
-from visualdl import LogWriter
+from tensorboardX import SummaryWriter
 
 from dataloader import MSRVTT, VATEX
 from utils import generate_square_subsequent_mask
@@ -21,10 +21,10 @@ device = torch.device("cuda")
 
 class Opt:
     # data
-    train_feat_dir = r"data/msrvtt_I3Drgb_fps15_feats/train"
-    train_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
-    val_feat_dir = r"data/msrvtt_I3Drgb_fps15_feats/val"
-    val_annotation_path = r"./data/MSRVTT-annotations/train_val_videodatainfo.json"
+    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_I3Drgb_fps15_feats/train"
+    train_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
+    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_I3Drgb_fps15_feats/val"
+    val_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = None
     # train
     batch_size = 64
@@ -48,6 +48,7 @@ class Opt:
     save_freq = 5
     load_model = None
     model_save_dir = "./checkpoint"
+    log_subdir = "I3D"
     _extra_msg = "MSRVTT&I3Drgb&sche"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
@@ -233,6 +234,12 @@ def multi_cap_collate_fn(data):
     return feat_ts, text_ts_list, feat_mask_ts, text_mask_ts_list
 
 
+def build_summary_writer(path, options):
+    writer = SummaryWriter(path, comment=options.training_name)
+    writer.add_hparams(options, metric_dict={})
+    return writer
+
+
 if __name__ == "__main__":
     opt = Opt()
     transformer = VideoTransformer(num_encoder_layers=opt.enc_layer_num,
@@ -275,7 +282,7 @@ if __name__ == "__main__":
                                    verbose=True,
                                    path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
     # visulize & log
-    writer = LogWriter(f"./log/I3D/{opt.training_name}")
+    writer = build_summary_writer(os.path.join("./log", opt.log_subdir), opt.training_name)
 
     # dataloader
     train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
@@ -299,11 +306,11 @@ if __name__ == "__main__":
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
               f" Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
         print(f"target:{sample_text} \nresult:{result_text}")
-        writer.add_scalar("train_loss", train_loss, step=epoch)
-        writer.add_scalar("val_loss", val_loss, step=epoch)
+        writer.add_scalar("train_loss", train_loss, epoch)
+        writer.add_scalar("val_loss", val_loss, epoch)
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
-        writer.add_text("text/sample", sample_text, step=epoch)
-        writer.add_text("text/result", result_text, step=epoch)
+        writer.add_text("text/sample", sample_text, epoch)
+        writer.add_text("text/result", result_text, epoch)
         lr_scheduler.step(val_loss)
 
         # early stopping
