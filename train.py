@@ -21,35 +21,35 @@ device = torch.device("cuda")
 
 class Opt:
     # data
-    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_I3Drgb_fps15_feats/train"
+    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/train"
     train_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
-    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_I3Drgb_fps15_feats/val"
+    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/val"
     val_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
     raw_video_dir = None
     # train
     batch_size = 64
     lr = 1e-4
     max_len = 30
-    learning_rate_patience = 5
+    # learning_rate_patience = 5
     early_stopping_patience = 10
-    scheduled_sampling = True
+    scheduled_sampling = False
     # model
     bert_type = "bert-base-uncased"
     enc_layer_num = 4
     dec_layer_num = 4
     head_num = 8
-    feat_size = 1024
+    feat_size = 512
     emb_dim = 512
     hid_dim = 2048
     dropout = 0.3
     epoch_num = 30
     use_bert = False
     # save & load
-    save_freq = 5
+    save_freq = 10
     load_model = None
     model_save_dir = "./checkpoint"
-    log_subdir = "I3D"
-    _extra_msg = "MSRVTT&I3Drgb&sche"  # Dataset|Bert|pretrained
+    log_subdir = "CLIP"
+    _extra_msg = "MSRVTT&CLIP"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
 
@@ -236,7 +236,7 @@ def multi_cap_collate_fn(data):
 
 def build_summary_writer(path, options):
     writer = SummaryWriter(path, comment=options.training_name)
-    writer.add_hparams(options, metric_dict={})
+    writer.add_hparams(hparam_dict=vars(options), metric_dict={"loss": 123})
     return writer
 
 
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     transformer = transformer.to(device)
     # transformer.freeze_bert()
 
-    tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
+    tokenizer = AutoTokenizer.from_pretrained("/data3/lzh_3/video-captioning-swin-transformer/data/tk/")
     pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
     start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     end_id = tokenizer.convert_tokens_to_ids("[SEP]")
@@ -274,15 +274,18 @@ if __name__ == "__main__":
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     optimizer = torch.optim.Adam(filter(lambda param: param.requires_grad, transformer.parameters()), lr=opt.lr)
     # dynamic learning rate
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, verbose=True, patience=opt.learning_rate_patience
+    # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, verbose=True, patience=opt.learning_rate_patience
+    # )
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=8, eta_min=1e-5, verbose=True
     )
     # early stop
     early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
                                    verbose=True,
                                    path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
     # visulize & log
-    writer = build_summary_writer(os.path.join("./log", opt.log_subdir), opt.training_name)
+    writer = build_summary_writer(os.path.join("./log", opt.log_subdir), opt)
 
     # dataloader
     train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
@@ -308,10 +311,11 @@ if __name__ == "__main__":
         print(f"target:{sample_text} \nresult:{result_text}")
         writer.add_scalar("train_loss", train_loss, epoch)
         writer.add_scalar("val_loss", val_loss, epoch)
-        writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], step=epoch)
+        writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], epoch)
         writer.add_text("text/sample", sample_text, epoch)
         writer.add_text("text/result", result_text, epoch)
-        lr_scheduler.step(val_loss)
+        # lr_scheduler.step(val_loss)
+        lr_scheduler.step()
 
         # early stopping
         early_stopping(val_loss, transformer)
