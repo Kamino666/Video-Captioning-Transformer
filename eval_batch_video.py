@@ -164,17 +164,18 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         print(rouge_l_metric_rs())
 
 
-def coco_eval(model, test_loader, test_iter):
+def coco_eval(model, test_loader, test_iter, verbose=True):
     video2caption = test_iter.video2caption
     vid2result = greedy_decode_dataset(model, test_loader)
     gts, samples, IDs = make_coco_sample(vid2result, video2caption)
 
-    scorer = COCOScorer()
+    scorer = COCOScorer(verbose=verbose)
     scorer.score(gts, samples, IDs)
-    print("***********************")
-    print(scorer.eval)
-    print("***********************")
-    print(scorer.imgToEval)
+    return scorer
+    # print("***********************")
+    # print(scorer.eval)
+    # print("***********************")
+    # print(scorer.imgToEval)
 
 
 def make_coco_sample(prediction_dict, ground_truth_dict):
@@ -205,8 +206,10 @@ class COCOScorer(object):
     Microsoft COCO Caption Evaluation
     """
 
-    def __init__(self):
-        print('init COCO-EVAL scorer')
+    def __init__(self, verbose=True):
+        self.verbose = verbose
+        if self.verbose:
+            print('init COCO-EVAL scorer')
 
     def score(self, GT, RES, IDs):
         """
@@ -226,7 +229,8 @@ class COCOScorer(object):
             gts[ID] = GT[ID]
             res[ID] = RES[ID]
         # get token
-        print('tokenization...')
+        if self.verbose:
+            print('tokenization...')
         tokenizer = PTBTokenizer()
         gts = tokenizer.tokenize(gts)
         res = tokenizer.tokenize(res)
@@ -234,7 +238,8 @@ class COCOScorer(object):
         # =================================================
         # Set up scorers
         # =================================================
-        print('setting up scorers...')
+        if self.verbose:
+            print('setting up scorers...')
         scorers = [
             (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
             (Meteor(), "METEOR"),
@@ -248,17 +253,20 @@ class COCOScorer(object):
         # =================================================
         eval = {}
         for scorer, method in scorers:
-            print('computing %s score...' % (scorer.method()))
+            if self.verbose:
+                print('computing %s score...' % (scorer.method()))
             score, scores = scorer.compute_score(gts, res)
             if type(method) == list:
                 for sc, scs, m in zip(score, scores, method):
                     self.setEval(sc, m)
                     self.setImgToEvalImgs(scs, IDs, m)
-                    print("%s: %0.3f" % (m, sc))
+                    if self.verbose:
+                        print("%s: %0.3f" % (m, sc))
             else:
                 self.setEval(score, method)
                 self.setImgToEvalImgs(scores, IDs, method)
-                print("%s: %0.3f" % (method, score))
+                if self.verbose:
+                    print("%s: %0.3f" % (method, score))
 
         # for metric, score in self.eval.items():
         #    print '%s: %.3f'%(metric, score)

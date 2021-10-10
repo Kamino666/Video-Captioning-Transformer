@@ -9,6 +9,8 @@ from tensorboardX import SummaryWriter
 from dataloader import MSRVTT, VATEX
 from utils import generate_square_subsequent_mask
 from model.model import VideoTransformer
+from eval_batch_video import coco_eval
+from eval_batch_video import collate_fn as collate_fn_metric
 
 from tqdm import tqdm
 from timeit import default_timer as timer
@@ -30,6 +32,7 @@ class Opt:
     batch_size = 64
     lr = 1e-4
     max_len = 30
+    observe_metric = True
     # learning_rate_patience = 5
     early_stopping_patience = 10
     scheduled_sampling = False
@@ -105,6 +108,19 @@ def evaluate(model, val_dataloader):
         losses += loss.item()
 
     return losses / len(val_dataloader)
+
+
+def eval_by_metric(model, val_dataloader, val_iter):
+    """
+    {'Bleu_1': 0.7350285171100914, 'Bleu_2': 0.5488721869312329,
+     'Bleu_3': 0.39126032508403474, 'Bleu_4': 0.26597046542549374,
+      'METEOR': 0.24072781402828644, 'ROUGE_L': 0.529469363492036,
+       'CIDEr': 0.2837123774801633}
+    """
+    scorer = coco_eval(model, val_dataloader, val_iter, verbose=False)
+    score = {k: round(v, 4) for k, v in scorer.eval.items()}
+    return score
+
 
 
 def train_epoch_gda(model, optimizer, train_dataloader):
@@ -234,10 +250,9 @@ def multi_cap_collate_fn(data):
     return feat_ts, text_ts_list, feat_mask_ts, text_mask_ts_list
 
 
-def build_summary_writer(path, options):
-    writer = SummaryWriter(path, comment=options.training_name)
-    writer.add_hparams(hparam_dict=vars(options), metric_dict={"loss": 123})
-    return writer
+# def build_summary_writer(writer, result_loss):
+#     hparam_dict = vars(Opt)
+#     writer.add_hparams(hparam_dict=vars(Opt), metric_dict={"loss": result_loss})
 
 
 if __name__ == "__main__":
@@ -285,25 +300,33 @@ if __name__ == "__main__":
                                    verbose=True,
                                    path=os.path.join(opt.model_save_dir, f"{opt.training_name}_earlystop.pth"))
     # visulize & log
-    writer = build_summary_writer(os.path.join("./log", opt.log_subdir), opt)
+    writer = SummaryWriter(os.path.join("./log", opt.log_subdir))
 
     # dataloader
     train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
     train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=collate_fn, shuffle=True)
-    val_iter = MSRVTT(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate")
+    val_iter = MSRVTT(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate", include_id=True)
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
+    if opt.observe_metric is True:
+        metric_val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=collate_fn_metric)
 
     # train
     for epoch in range(1 + st_epoch, opt.epoch_num + 1 + st_epoch):
+        # 训练一个epoch
         start_time = timer()
         train_loss = train_epoch(transformer, optimizer, train_dataloader)
         end_time = timer()
-
+        # 验证一个epoch
         val_loss = evaluate(transformer, val_dataloader)
-
+        # 验证METEOR指标
+        if opt.observe_metric is True:
+            score_dict = eval_by_metric(transformer, metric_val_dataloader, val_iter)
+        # 取样检查效果
         sample = val_iter.get_a_sample(ori_video_dir=opt.raw_video_dir)
-        result_text = translate(transformer, sample["v_feat"], opt.max_len, start_id, end_id, tokenizer)
-        sample_text = sample["raw_caption"]
+        result_text = sample['v_id'] + translate(transformer, sample["v_feat"], opt.max_len, start_id, end_id, tokenizer)
+        sample_text = sample['v_id'] + sample["raw_caption"]
+        # lr_scheduler.step(val_loss)
+        lr_scheduler.step()
 
         # logging
         print(f"Epoch: {epoch}, Train loss: {train_loss:.3f},"
@@ -314,8 +337,10 @@ if __name__ == "__main__":
         writer.add_scalar('lr', optimizer.state_dict()['param_groups'][0]['lr'], epoch)
         writer.add_text("text/sample", sample_text, epoch)
         writer.add_text("text/result", result_text, epoch)
-        # lr_scheduler.step(val_loss)
-        lr_scheduler.step()
+        if opt.observe_metric is True:
+            print(f"METEOR:{score_dict['METEOR']} B@4:{score_dict['Bleu_4']}")
+            writer.add_scalar("METEOR", score_dict['METEOR'], epoch)
+            writer.add_scalar("Bleu@4", score_dict['Bleu_4'], epoch)
 
         # early stopping
         early_stopping(val_loss, transformer)
@@ -327,3 +352,6 @@ if __name__ == "__main__":
             print("Saving checkpoint...")
             torch.save(transformer.state_dict(),
                        os.path.join(opt.model_save_dir, f"{opt.training_name}_epoch{epoch}.pth"))
+
+    # over log
+    writer.add_hparams(hparam_dict=vars(Opt), metric_dict={"loss": early_stopping.best_score})
