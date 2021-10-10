@@ -36,7 +36,7 @@ class VideoTransformer(nn.Module):
                                        dropout=dropout,
                                        activation="gelu",
                                        batch_first=True)
-        self.tokenizer = AutoTokenizer.from_pretrained("./data/tk/")
+        self.tokenizer = AutoTokenizer.from_pretrained("/data3/lzh_3/video-captioning-swin-transformer/data/tk/")
         pad_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
         vocab_size = self.tokenizer.vocab_size
         self.generator = nn.Linear(emb_size, vocab_size)
@@ -62,10 +62,10 @@ class VideoTransformer(nn.Module):
 
         # 如果是单个caption，则直接transformer
         if type(tgt) == Tensor:
-            if self.scheduled_sampling is False:
+            if self.scheduled_sampling is False or self.training is False:
                 tgt_emb = self.positional_encoding(self.tgt_to_emb(tgt))
                 outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
-                                        src_padding_mask, tgt_padding_mask, src_padding_mask)
+                                        src_padding_mask, tgt_padding_mask, None)
                 return self.generator(outs)
             else:
                 tgt_emb = self.tgt_to_emb(tgt)  # B T E
@@ -124,6 +124,10 @@ class VideoTransformer(nn.Module):
         for name, v in self.named_parameters():
             if "tgt_to_emb" in name:
                 v.requires_grad = False
+
+    def load_embedding_weights(self, weight):
+        assert self.tgt_to_emb.weight.shape == weight.shape
+        self.tgt_to_emb.weight = weight
 
 
 class MMVideoTransformer(nn.Module):

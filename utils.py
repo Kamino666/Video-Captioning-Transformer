@@ -2,10 +2,11 @@ import logging
 import torch.distributed as dist
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
-
 logger_initialized = {}
+
 
 def get_logger(name, log_file=None, log_level=logging.INFO, file_mode='w'):
     """Initialize and get a logger by name.
@@ -83,27 +84,54 @@ def get_logger(name, log_file=None, log_level=logging.INFO, file_mode='w'):
     return logger
 
 
-class MaskCriterion(nn.Module):
-    """calculate the CrossEntropyLoss in mask=1 area"""
+# class MaskCriterion(nn.Module):
+#     """calculate the CrossEntropyLoss in mask=1 area"""
+#
+#     def __init__(self):
+#         super(MaskCriterion, self).__init__()
+#         self.loss_fn = nn.CrossEntropyLoss()
+#
+#     def forward(self, logits, target, mask):
+#         """
+#         logits: shape of (N, seq_len - 1, vocab_size)
+#         target: shape of (N, seq_len)
+#         mask: shape of (N, seq_len)
+#         """
+#         item_sum = logits.shape[0]*logits.shape[1]  # N * seq_len
+#         target, mask = target[:, 1:], mask[:, 1:]
+#         # loss [N*seq_len]
+#         loss = self.loss_fn(logits.contiguous().view(item_sum, -1),
+#                             target.contiguous().view(-1))
+#         mask_loss = loss * mask.contiguous().view(-1)
+#         output = torch.sum(mask_loss) / torch.sum(mask)
+#         return output
+class LabelSmoothingLoss(nn.Module):
+    def __init__(self, smoothing: float = 0.1, reduction="mean", weight=None):
+        super(LabelSmoothingLoss, self).__init__()
+        self.smoothing = smoothing
+        self.reduction = reduction
+        self.weight = weight
 
-    def __init__(self):
-        super(MaskCriterion, self).__init__()
-        self.loss_fn = nn.CrossEntropyLoss()
+    def reduce_loss(self, loss):
+        return loss.mean() if self.reduction == 'mean' else loss.sum() \
+            if self.reduction == 'sum' else loss
 
-    def forward(self, logits, target, mask):
-        """
-        logits: shape of (N, seq_len - 1, vocab_size)
-        target: shape of (N, seq_len)
-        mask: shape of (N, seq_len)
-        """
-        item_sum = logits.shape[0]*logits.shape[1]  # N * seq_len
-        target, mask = target[:, 1:], mask[:, 1:]
-        # loss [N*seq_len]
-        loss = self.loss_fn(logits.contiguous().view(item_sum, -1),
-                            target.contiguous().view(-1))
-        mask_loss = loss * mask.contiguous().view(-1)
-        output = torch.sum(mask_loss) / torch.sum(mask)
-        return output
+    def linear_combination(self, x, y):
+        return self.smoothing * x + (1 - self.smoothing) * y
+
+    def forward(self, preds, target):
+        assert 0 <= self.smoothing < 1
+
+        if self.weight is not None:
+            self.weight = self.weight.to(preds.device)
+
+        n = preds.size(-1)
+        log_preds = F.log_softmax(preds, dim=-1)
+        loss = self.reduce_loss(-log_preds.sum(dim=-1))
+        nll = F.nll_loss(
+            log_preds, target, reduction=self.reduction, weight=self.weight
+        )
+        return self.linear_combination(loss / n, nll)
 
 
 class EarlyStopping:
@@ -192,6 +220,7 @@ class Meter:
         self.sum = 0
         return rslt
 
+
 def show_input_shape(**kwargs):
     print("\n***************************************")
     for name, arg in kwargs.items():
@@ -204,3 +233,65 @@ def show_input_shape(**kwargs):
             print("")
     print("***************************************\n")
 
+
+def build_collate_fn(pad_id: int, include_id: bool):
+    def func1(data):
+        batch_size = len(data)
+        # video id
+        id_data = [i[2] for i in data]
+
+        # video feature
+        feat_dim = data[0][0].shape[1]
+        feat_data = [i[0] for i in data]
+        feat_len = [len(i) for i in feat_data]
+        max_len = max(feat_len)
+        feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
+        feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
+        for i in range(batch_size):
+            feat_ts[i, :feat_len[i]] = feat_data[i]
+            feat_mask_ts[i, :feat_len[i]] = 0
+        feat_mask_ts = (feat_mask_ts == 1)
+
+        # text
+        text_data = [i[1] for i in data]
+        text_len = [len(i) for i in text_data]
+        max_len = max(text_len)
+        text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * pad_id
+        for i in range(batch_size):
+            text_ts[i, :text_len[i]] = text_data[i]
+        text_mask_ts = (text_ts == pad_id)
+        return feat_ts, text_ts, feat_mask_ts, text_mask_ts, id_data
+
+    def func2(data):
+        """
+        :param data:
+        :return tuple(N T E, N T):
+        """
+        batch_size = len(data)
+
+        # video feature
+        feat_dim = data[0][0].shape[1]
+        feat_data = [i[0] for i in data]
+        feat_len = [len(i) for i in feat_data]
+        max_len = max(feat_len)
+        feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
+        feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
+        for i in range(batch_size):
+            feat_ts[i, :feat_len[i]] = feat_data[i]
+            feat_mask_ts[i, :feat_len[i]] = 0
+        feat_mask_ts = (feat_mask_ts == 1)
+
+        # text
+        text_data = [i[1] for i in data]
+        text_len = [len(i) for i in text_data]
+        max_len = max(text_len)
+        text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * pad_id
+        for i in range(batch_size):
+            text_ts[i, :text_len[i]] = text_data[i]
+        text_mask_ts = (text_ts == pad_id)
+        return feat_ts, text_ts, feat_mask_ts, text_mask_ts
+
+    if include_id is True:
+        return func1
+    else:
+        return func2

@@ -1,11 +1,12 @@
 from datasets import load_metric
-from train import VideoTransformer, MSRVTT, VATEX
-from train import generate_square_subsequent_mask
+from model.model import VideoTransformer
+from dataloader import MSRVTT, VATEX
+from utils import generate_square_subsequent_mask
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from tqdm import tqdm
-from utils import Meter
+from utils import Meter, build_collate_fn
 
 from nltk.translate.meteor_score import meteor_score
 from nltk.translate.bleu_score import SmoothingFunction, corpus_bleu
@@ -18,15 +19,15 @@ from coco_caption.pycocoevalcap.cider.cider import Cider
 from coco_caption.pycocoevalcap.meteor.meteor import Meteor
 from coco_caption.pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 
-device = torch.device("cpu")
+device = torch.device("cuda")
 
 
 class EvalOpt:
     # eval
-    video_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_resnet152_fps3_feats/val"
+    video_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/val"
     annotation_file = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
     tokenizer_type = "bert-base-uncased"
-    model_path = r"./checkpoint/b64_lr0001_dp03_emb512_e4_d4_hd8_hi2048_MSRVTT&resnet152&for_deployment_earlystop.pth"
+    model_path = r"./checkpoint/b64_lr0001_dp03_emb512_e4_d4_hd8_hi2048_MSRVTT&CLIP_earlystop.pth"
     max_len = 30
     batch_size = 32
     # model
@@ -34,7 +35,7 @@ class EvalOpt:
     enc_layer_num = 4
     dec_layer_num = 4
     head_num = 8
-    feat_size = 2048
+    feat_size = 512
     emb_dim = 512
     hid_dim = 2048
     dropout = 0.3
@@ -42,39 +43,39 @@ class EvalOpt:
     use_bert = False
 
 
-def collate_fn(data):
-    """
-    :param data:
-    :return tuple(N T E, N T):
-    """
-    batch_size = len(data)
-    # video id
-    id_data = [i[2] for i in data]
+# def collate_fn(data):
+#     """
+#     :param data:
+#     :return tuple(N T E, N T):
+#     """
+#     batch_size = len(data)
+#     # video id
+#     id_data = [i[2] for i in data]
+#
+#     # video feature
+#     feat_dim = data[0][0].shape[1]
+#     feat_data = [i[0] for i in data]
+#     feat_len = [len(i) for i in feat_data]
+#     max_len = max(feat_len)
+#     feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
+#     feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
+#     for i in range(batch_size):
+#         feat_ts[i, :feat_len[i]] = feat_data[i]
+#         feat_mask_ts[i, :feat_len[i]] = 0
+#     feat_mask_ts = (feat_mask_ts == 1)
+#
+#     # text
+#     text_data = [i[1] for i in data]
+#     text_len = [len(i) for i in text_data]
+#     max_len = max(text_len)
+#     text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * opt.pad_id
+#     for i in range(batch_size):
+#         text_ts[i, :text_len[i]] = text_data[i]
+#     text_mask_ts = (text_ts == opt.pad_id)
+#     return feat_ts, text_ts, feat_mask_ts, text_mask_ts, id_data
 
-    # video feature
-    feat_dim = data[0][0].shape[1]
-    feat_data = [i[0] for i in data]
-    feat_len = [len(i) for i in feat_data]
-    max_len = max(feat_len)
-    feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
-    feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
-    for i in range(batch_size):
-        feat_ts[i, :feat_len[i]] = feat_data[i]
-        feat_mask_ts[i, :feat_len[i]] = 0
-    feat_mask_ts = (feat_mask_ts == 1)
 
-    # text
-    text_data = [i[1] for i in data]
-    text_len = [len(i) for i in text_data]
-    max_len = max(text_len)
-    text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * opt.pad_id
-    for i in range(batch_size):
-        text_ts[i, :text_len[i]] = text_data[i]
-    text_mask_ts = (text_ts == opt.pad_id)
-    return feat_ts, text_ts, feat_mask_ts, text_mask_ts, id_data
-
-
-def greedy_decode_dataset(model, test_loader):
+def greedy_decode_dataset(model, test_loader, opt, tokenizer):
     vid2result = {}
     for src, tgt, src_padding_mask, tgt_padding_mask, video_ids in tqdm(test_loader):
         src = src.to(device)  # N, T
@@ -164,9 +165,9 @@ def metric_eval(model, test_loader, test_iter, metrics=None):
         print(rouge_l_metric_rs())
 
 
-def coco_eval(model, test_loader, test_iter, verbose=True):
+def coco_eval(model, test_loader, test_iter, opt, tokenizer, verbose=True):
     video2caption = test_iter.video2caption
-    vid2result = greedy_decode_dataset(model, test_loader)
+    vid2result = greedy_decode_dataset(model, test_loader, opt, tokenizer)
     gts, samples, IDs = make_coco_sample(vid2result, video2caption)
 
     scorer = COCOScorer(verbose=verbose)
@@ -308,6 +309,8 @@ if __name__ == "__main__":
     test_iter = MSRVTT(opt.video_feat_dir, opt.annotation_file,
                        tokenizer=tokenizer, mode="validate",
                        by_caption=False, include_id=True)
-    test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=collate_fn)
+    test_dataloader = DataLoader(test_iter, batch_size=opt.batch_size, collate_fn=build_collate_fn(opt.pad_id, True))
     # metric_eval(transformer, test_dataloader, test_iter, metrics=["meteor", "bleu", "rouge"])
-    coco_eval(transformer, test_dataloader, test_iter)
+    scorer = coco_eval(transformer, test_dataloader, test_iter, opt, tokenizer)
+    print("***********************")
+    print(scorer.eval)
