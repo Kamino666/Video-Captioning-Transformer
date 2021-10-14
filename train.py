@@ -8,6 +8,7 @@ from tensorboardX import SummaryWriter
 
 from dataloader import MSRVTT, VATEX
 from utils import generate_square_subsequent_mask, build_collate_fn
+from utils import SCELoss
 from model.model import VideoTransformer
 from eval_batch_video import coco_eval
 
@@ -20,13 +21,13 @@ import os
 device = torch.device("cuda")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+
 class Opt:
     # data
-    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/train"
-    # train_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations-augmented/train_val_videodatainfo(augmented).json"
-    train_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
-    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/val"
-    val_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
+    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_CLIP_fps3_feats/train"
+    train_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations-clean/train_val_videodatainfo.json"
+    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_CLIP_fps3_feats/val"
+    val_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations-clean/train_val_videodatainfo.json"
     raw_video_dir = None
     # train
     batch_size = 64
@@ -35,7 +36,6 @@ class Opt:
     observe_metric = False
     # learning_rate_patience = 5
     early_stopping_patience = 10
-    scheduled_sampling = False
     # model
     bert_type = "bert-base-uncased"
     enc_layer_num = 4
@@ -51,7 +51,7 @@ class Opt:
     save_freq = 10
     load_model = None
     model_save_dir = "./checkpoint"
-    _extra_msg = "MSRVTT&CLIP&BERT_emb2"  # Dataset|Bert|pretrained
+    _extra_msg = "MSRVTT&CLIP3&SCE_loss"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
     log_subdir = training_name
@@ -194,6 +194,8 @@ def get_embedding_from_bert(bert_type="bert-base-uncased"):
     for k, v in bert.named_parameters():
         if k == "embeddings.word_embeddings.weight":
             return v
+
+
 # def collate_fn(data):
 #     """
 #     :param data:
@@ -267,7 +269,6 @@ if __name__ == "__main__":
                                    dropout=opt.dropout,
                                    use_bert=opt.use_bert,
                                    dim_feedforward=opt.hid_dim,
-                                   scheduled_sampling=opt.scheduled_sampling,
                                    device=device)
     if opt.load_model is None:
         st_epoch = 0
@@ -278,7 +279,7 @@ if __name__ == "__main__":
         transformer.load_state_dict(torch.load(opt.load_model))
         st_epoch = int(re.findall("epoch([0-9]+)", opt.load_model)[0])
 
-    transformer.load_embedding_weights(get_embedding_from_bert("bert-base-uncased"))
+    # transformer.load_embedding_weights(get_embedding_from_bert("bert-base-uncased"))
     transformer = transformer.to(device)
     # transformer.freeze_bert()
 
@@ -290,8 +291,12 @@ if __name__ == "__main__":
     opt.start_id = start_id
     opt.end_id = end_id
 
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
+    # loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
+    # loss_fn = SCELoss(0.5, 0.5, pad_id, tokenizer.vocab_size)
+    loss_fn = SCELoss(0.5, 0.5, pad_id, tokenizer.vocab_size)
+
     optimizer = torch.optim.Adam(filter(lambda param: param.requires_grad, transformer.parameters()), lr=opt.lr)
+
     # dynamic learning rate
     # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     #     optimizer, verbose=True, patience=opt.learning_rate_patience
@@ -299,6 +304,7 @@ if __name__ == "__main__":
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=8, eta_min=1e-5, verbose=True
     )
+
     # early stop
     early_stopping = EarlyStopping(patience=opt.early_stopping_patience,
                                    verbose=True,
@@ -308,11 +314,13 @@ if __name__ == "__main__":
 
     # dataloader
     train_iter = MSRVTT(opt.train_feat_dir, opt.train_annotation_path, tokenizer=tokenizer)
-    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=build_collate_fn(opt.pad_id, False), shuffle=True)
+    train_dataloader = DataLoader(train_iter, batch_size=opt.batch_size, collate_fn=build_collate_fn(opt.pad_id, False),
+                                  shuffle=True)
     val_iter = MSRVTT(opt.val_feat_dir, opt.val_annotation_path, tokenizer=tokenizer, mode="validate", include_id=True)
     val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=build_collate_fn(opt.pad_id, False))
     if opt.observe_metric is True:
-        metric_val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size, collate_fn=build_collate_fn(opt.pad_id, True))
+        metric_val_dataloader = DataLoader(val_iter, batch_size=opt.batch_size,
+                                           collate_fn=build_collate_fn(opt.pad_id, True))
 
     # train
     for epoch in range(1 + st_epoch, opt.epoch_num + 1 + st_epoch):
@@ -327,7 +335,8 @@ if __name__ == "__main__":
             score_dict = eval_by_metric(transformer, metric_val_dataloader, val_iter, opt, tokenizer)
         # 取样检查效果
         sample = val_iter.get_a_sample(ori_video_dir=opt.raw_video_dir)
-        result_text = sample['v_id'] + " " + translate(transformer, sample["v_feat"], opt.max_len, start_id, end_id, tokenizer)
+        result_text = sample['v_id'] + " " + translate(transformer, sample["v_feat"], opt.max_len, start_id, end_id,
+                                                       tokenizer)
         sample_text = sample['v_id'] + " " + sample["raw_caption"]
         # lr_scheduler.step(val_loss)
         lr_scheduler.step()
@@ -360,11 +369,8 @@ if __name__ == "__main__":
     # over log
     writer.add_hparams(hparam_dict=dict(vars(Opt)), metric_dict={"loss": early_stopping.best_score})
 
-# TODO: 多GPU
-# TODO: MMT的同步与统一
-# TODO: 自己提取CLIP特征
-# TODO: 测试斌斌的数据扩充训练        卧槽，时间翻了十倍
-# TODO: 测试改进的log也没有用        有用
-# TODO: 测试更小的模型有没有用       答：没有用
-# TODO: Label Smoothing           写好了待测试
-# TODO: 加载BERT的embedding参数    没啥用啊，可能没加载上
+# TODO: 多GPU训练
+# TODO: 开发MMT，注意同步与统一，注意输入检测，这是个大作业
+# TODO: 搞好test_video.py
+# TODO: embedding学习率调整         后面再来细调
+# TODO: 改成KL LabelSmoothing      算了吧
