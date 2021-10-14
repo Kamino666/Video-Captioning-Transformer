@@ -105,33 +105,30 @@ def get_logger(name, log_file=None, log_level=logging.INFO, file_mode='w'):
 #         mask_loss = loss * mask.contiguous().view(-1)
 #         output = torch.sum(mask_loss) / torch.sum(mask)
 #         return output
-class LabelSmoothingLoss(nn.Module):
-    def __init__(self, smoothing: float = 0.1, reduction="mean", weight=None):
-        super(LabelSmoothingLoss, self).__init__()
-        self.smoothing = smoothing
-        self.reduction = reduction
-        self.weight = weight
+class SCELoss(torch.nn.Module):
+    def __init__(self, alpha, beta, ignore_index, num_classes=10):
+        super(SCELoss, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.alpha = alpha
+        self.beta = beta
+        self.num_classes = num_classes
+        self.cross_entropy = torch.nn.CrossEntropyLoss(ignore_index=ignore_index)
 
-    def reduce_loss(self, loss):
-        return loss.mean() if self.reduction == 'mean' else loss.sum() \
-            if self.reduction == 'sum' else loss
+    def forward(self, pred, labels):
+        # CCE
+        ce = self.cross_entropy(pred, labels)
 
-    def linear_combination(self, x, y):
-        return self.smoothing * x + (1 - self.smoothing) * y
+        # RCE
+        pred = F.softmax(pred, dim=1)
+        pred = torch.clamp(pred, min=1e-7, max=1.0)
+        label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
+        label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
+        # rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
+        rce = -torch.sum(pred * torch.log(label_one_hot), dim=1)
 
-    def forward(self, preds, target):
-        assert 0 <= self.smoothing < 1
-
-        if self.weight is not None:
-            self.weight = self.weight.to(preds.device)
-
-        n = preds.size(-1)
-        log_preds = F.log_softmax(preds, dim=-1)
-        loss = self.reduce_loss(-log_preds.sum(dim=-1))
-        nll = F.nll_loss(
-            log_preds, target, reduction=self.reduction, weight=self.weight
-        )
-        return self.linear_combination(loss / n, nll)
+        # Loss
+        loss = self.alpha * ce + self.beta * rce.mean()
+        return loss
 
 
 class EarlyStopping:
