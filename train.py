@@ -6,8 +6,8 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, BertModel
 from tensorboardX import SummaryWriter
 
-from dataloader import MSRVTT, VATEX
-from utils import generate_square_subsequent_mask, build_collate_fn
+from dataloader import MSRVTT, build_collate_fn
+from utils import generate_square_subsequent_mask
 from utils import SCELoss
 from model.model import VideoTransformer
 from eval_batch_video import coco_eval

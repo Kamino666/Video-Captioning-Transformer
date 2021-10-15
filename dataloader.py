@@ -10,40 +10,6 @@ from tqdm import tqdm
 import random
 
 
-def load_single_video(video_path, frames_num, frames_size, tensor=False):
-    video = mmcv.VideoReader(str(video_path))
-    frame_cnt = video.frame_cnt
-    samples_ix = np.linspace(0, frame_cnt - 1, frames_num).astype(int)
-    frames = map(lambda x: video.get_frame(x), samples_ix)
-    resized_frames = torch.stack(
-        list(map(lambda x: torch.tensor(mmcv.imresize(x, (frames_size, frames_size))), frames)))
-    if tensor is True:
-        return resized_frames
-    else:
-        return resized_frames.numpy()
-
-
-def make_video_buffer(video_paths, save_path, frames_num, frames_size, compress=True):
-    """
-    preprocess video and save buffer as numpy array
-    :param compress: whether or not to do compress
-    :param video_paths: list of video paths
-    :param save_path: the path to save buffer
-    :param frames_num: fix number of frames to extract
-    :param frames_size: frames size of the video
-    :return:
-    """
-    # video_ids = [i.stem for i in video_paths]
-    all_video_arr_dict = {}  # dict(N, T, H, W, C)
-    for path in tqdm(list(video_paths), desc="making buffer"):
-        video_arr = load_single_video(path, frames_num, frames_size, tensor=False)
-        all_video_arr_dict[path.stem] = video_arr
-    if compress is True:
-        np.savez_compressed(save_path, **all_video_arr_dict)
-    else:
-        np.savez(save_path, **all_video_arr_dict)
-
-
 class MSRVTT(Dataset):
     def __init__(self, video_feat_dir: str, annotation_file: str, tokenizer,
                  mode: str = "train", include_id: bool = False, return_all_captions=False,
@@ -269,3 +235,67 @@ class MultiModalMSRVTT(Dataset):
             sample_dict["raw_v_path"] = raw_video_path
 
         return sample_dict
+
+
+def build_collate_fn(pad_id: int, include_id: bool):
+    def func1(data):
+        batch_size = len(data)
+        # video id
+        id_data = [i[2] for i in data]
+
+        # video feature
+        feat_dim = data[0][0].shape[1]
+        feat_data = [i[0] for i in data]
+        feat_len = [len(i) for i in feat_data]
+        max_len = max(feat_len)
+        feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
+        feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
+        for i in range(batch_size):
+            feat_ts[i, :feat_len[i]] = feat_data[i]
+            feat_mask_ts[i, :feat_len[i]] = 0
+        feat_mask_ts = (feat_mask_ts == 1)
+
+        # text
+        text_data = [i[1] for i in data]
+        text_len = [len(i) for i in text_data]
+        max_len = max(text_len)
+        text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * pad_id
+        for i in range(batch_size):
+            text_ts[i, :text_len[i]] = text_data[i]
+        text_mask_ts = (text_ts == pad_id)
+        return feat_ts, text_ts, feat_mask_ts, text_mask_ts, id_data
+
+    def func2(data):
+        """
+        :param data:
+        :return tuple(N T E, N T):
+        """
+        batch_size = len(data)
+
+        # video feature
+        feat_dim = data[0][0].shape[1]
+        feat_data = [i[0] for i in data]
+        feat_len = [len(i) for i in feat_data]
+        max_len = max(feat_len)
+        feat_ts = torch.zeros([batch_size, max_len, feat_dim], dtype=torch.float)
+        feat_mask_ts = torch.ones([batch_size, max_len], dtype=torch.long)
+        for i in range(batch_size):
+            feat_ts[i, :feat_len[i]] = feat_data[i]
+            feat_mask_ts[i, :feat_len[i]] = 0
+        feat_mask_ts = (feat_mask_ts == 1)
+
+        # text
+        text_data = [i[1] for i in data]
+        text_len = [len(i) for i in text_data]
+        max_len = max(text_len)
+        text_ts = torch.ones([batch_size, max_len], dtype=torch.long) * pad_id
+        for i in range(batch_size):
+            text_ts[i, :text_len[i]] = text_data[i]
+        text_mask_ts = (text_ts == pad_id)
+        return feat_ts, text_ts, feat_mask_ts, text_mask_ts
+
+    if include_id is True:
+        return func1
+    else:
+        return func2
+
