@@ -1,111 +1,35 @@
 import logging
 import torch.distributed as dist
-
-logger_initialized = {}
-
-def get_logger(name, log_file=None, log_level=logging.INFO, file_mode='w'):
-    """Initialize and get a logger by name.
-
-    If the logger has not been initialized, this method will initialize the
-    logger by adding one or two handlers, otherwise the initialized logger will
-    be directly returned. During initialization, a StreamHandler will always be
-    added. If `log_file` is specified and the process rank is 0, a FileHandler
-    will also be added.
-
-    Args:
-        name (str): Logger name.
-        log_file (str | None): The log filename. If specified, a FileHandler
-            will be added to the logger.
-        log_level (int): The logger level. Note that only the process of
-            rank 0 is affected, and other processes will set the level to
-            "Error" thus be silent most of the time.
-        file_mode (str): The file mode used in opening log file.
-            Defaults to 'w'.
-
-    Returns:
-        logging.Logger: The expected logger.
-    """
-    logger = logging.getLogger(name)
-    if name in logger_initialized:
-        return logger
-    # handle hierarchical names
-    # e.g., logger "a" is initialized, then logger "a.b" will skip the
-    # initialization since it is a child of "a".
-    for logger_name in logger_initialized:
-        if name.startswith(logger_name):
-            return logger
-
-    # handle duplicate logs to the console
-    # Starting in 1.8.0, PyTorch DDP attaches a StreamHandler <stderr> (NOTSET)
-    # to the root logger. As logger.propagate is True by default, this root
-    # level handler causes logging messages from rank>0 processes to
-    # unexpectedly show up on the console, creating much unwanted clutter.
-    # To fix this issue, we set the root logger's StreamHandler, if any, to log
-    # at the ERROR level.
-    for handler in logger.root.handlers:
-        if type(handler) is logging.StreamHandler:
-            handler.setLevel(logging.ERROR)
-
-    stream_handler = logging.StreamHandler()
-    handlers = [stream_handler]
-
-    if dist.is_available() and dist.is_initialized():
-        rank = dist.get_rank()
-    else:
-        rank = 0
-
-    # only rank 0 will add a FileHandler
-    if rank == 0 and log_file is not None:
-        # Here, the default behaviour of the official logger is 'a'. Thus, we
-        # provide an interface to change the file mode to the default
-        # behaviour.
-        file_handler = logging.FileHandler(log_file, file_mode)
-        handlers.append(file_handler)
-
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    for handler in handlers:
-        handler.setFormatter(formatter)
-        handler.setLevel(log_level)
-        logger.addHandler(handler)
-
-    if rank == 0:
-        logger.setLevel(log_level)
-    else:
-        logger.setLevel(logging.ERROR)
-
-    logger_initialized[name] = True
-
-    return logger
-
-
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
 
-class MaskCriterion(nn.Module):
-    """calculate the CrossEntropyLoss in mask=1 area"""
+class SCELoss(torch.nn.Module):
+    def __init__(self, alpha, beta, ignore_index, num_classes=10):
+        super(SCELoss, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.alpha = alpha
+        self.beta = beta
+        self.num_classes = num_classes
+        self.cross_entropy = torch.nn.CrossEntropyLoss(ignore_index=ignore_index)
 
-    def __init__(self):
-        super(MaskCriterion, self).__init__()
-        self.loss_fn = nn.CrossEntropyLoss()
+    def forward(self, pred, labels):
+        # CCE
+        ce = self.cross_entropy(pred, labels)
 
-    def forward(self, logits, target, mask):
-        """
-        logits: shape of (N, seq_len - 1, vocab_size)
-        target: shape of (N, seq_len)
-        mask: shape of (N, seq_len)
-        """
-        item_sum = logits.shape[0]*logits.shape[1]  # N * seq_len
-        # target, mask = target[:, 1:], mask[:, 1:]
-        # loss [N*seq_len]
-        loss = self.loss_fn(logits.contiguous().view(item_sum, -1),
-                            target.contiguous().view(-1)
-                            )
-        mask_loss = loss * mask.contiguous().view(-1)
-        output = torch.sum(mask_loss) / torch.sum(mask)
-        return output
+        # RCE
+        pred = F.softmax(pred, dim=1)
+        pred = torch.clamp(pred, min=1e-7, max=1.0)
+        label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
+        label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
+        # rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
+        rce = -torch.sum(pred * torch.log(label_one_hot), dim=1)
+
+        # Loss
+        loss = self.alpha * ce + self.beta * rce.mean()
+        return loss
 
 
 class EarlyStopping:
@@ -158,5 +82,52 @@ class EarlyStopping:
         if self.verbose:
             self.trace_func(
                 f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model, self.path)
+        torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
+
+
+class Meter:
+    def __init__(self, mode="avg"):
+        assert mode in ["avg", "max"]
+        self.mode = mode
+        self.count = 0
+        self.sum = 0
+
+    def add(self, x):
+        if self.mode == "avg":
+            self.sum += x
+            self.count += 1
+        elif self.mode == "max":
+            self.sum = x if x > self.sum else self.sum
+
+    def get(self):
+        if self.mode == "avg":
+            return self.sum / self.count
+        elif self.mode == "max":
+            return self.sum
+
+    def pop(self):
+        rslt = self.get()
+        self.count = 0
+        self.sum = 0
+        return rslt
+
+
+def generate_square_subsequent_mask(sz):
+    mask = (torch.triu(torch.ones((sz, sz))) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    return mask
+
+
+def show_input_shape(**kwargs):
+    print("\n***************************************")
+    for name, arg in kwargs.items():
+        if type(arg) is torch.Tensor:
+            print(f"{name}: {arg.shape}")
+        elif type(arg) is dict:
+            print(f"{name}: ", end="")
+            for k, v in arg.items():
+                print(f"{k}:{v.shape}", end="  ")
+            print("")
+    print("***************************************\n")
+

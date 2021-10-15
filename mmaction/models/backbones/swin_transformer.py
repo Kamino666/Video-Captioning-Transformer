@@ -1,7 +1,3 @@
-'''
-Credit to the official implementation: https://github.com/SwinTransformer/Video-Swin-Transformer
-'''
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,36 +5,13 @@ import torch.utils.checkpoint as checkpoint
 import numpy as np
 from timm.models.layers import DropPath, trunc_normal_
 
+from mmcv.runner import load_checkpoint
+from mmaction.utils import get_root_logger
+from ..builder import BACKBONES
+
 from functools import reduce, lru_cache
 from operator import mul
 from einops import rearrange
-
-import logging
-from utils import get_logger
-from mmcv.runner import load_checkpoint
-from transformers import BertModel, AutoTokenizer
-import transformers as tf
-
-
-def get_root_logger(log_file=None, log_level=logging.INFO):
-    """Use ``get_logger`` method in mmcv to get the root logger.
-    The logger will be initialized if it has not been initialized. By default a
-    StreamHandler will be added. If ``log_file`` is specified, a FileHandler
-    will also be added. The name of the root logger is the top-level package
-    name, e.g., "mmaction".
-    Args:
-        log_file (str | None): The log filename. If specified, a FileHandler
-            will be added to the root logger.
-        log_level (int): The root logger level. Note that only the process of
-            rank 0 is affected, while other processes will set the level to
-            "Error" and be silent most of the time.
-    Returns:
-        :obj:`logging.Logger`: The root logger.
-    """
-    return get_logger(__name__.split('.')[0], log_file, log_level)
-
-
-mylogger = get_root_logger(log_level=logging.INFO)
 
 
 class Mlp(nn.Module):
@@ -67,12 +40,12 @@ def window_partition(x, window_size):
     Args:
         x: (B, D, H, W, C)
         window_size (tuple[int]): window size
+
     Returns:
         windows: (B*num_windows, window_size*window_size, C)
     """
     B, D, H, W, C = x.shape
-    x = x.view(B, D // window_size[0], window_size[0], H // window_size[1], window_size[1], W // window_size[2],
-               window_size[2], C)
+    x = x.view(B, D // window_size[0], window_size[0], H // window_size[1], window_size[1], W // window_size[2], window_size[2], C)
     windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, reduce(mul, window_size), C)
     return windows
 
@@ -84,13 +57,15 @@ def window_reverse(windows, window_size, B, D, H, W):
         window_size (tuple[int]): Window size
         H (int): Height of image
         W (int): Width of image
+
     Returns:
         x: (B, D, H, W, C)
     """
-    x = windows.view(B, D // window_size[0], H // window_size[1], W // window_size[2], window_size[0], window_size[1],
-                     window_size[2], -1)
+    x = windows.view(B, D // window_size[0], H // window_size[1], W // window_size[2], window_size[0], window_size[1], window_size[2], -1)
     x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous().view(B, D, H, W, -1)
     return x
+
+
 
 
 def get_window_size(x_size, window_size, shift_size=None):
@@ -133,8 +108,7 @@ class WindowAttention3D(nn.Module):
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1) * (2 * window_size[2] - 1),
-                        num_heads))  # 2*Wd-1 * 2*Wh-1 * 2*Ww-1, nH
+            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1) * (2 * window_size[2] - 1), num_heads))  # 2*Wd-1 * 2*Wh-1 * 2*Ww-1, nH
 
         # get pair-wise relative position index for each token inside the window
         coords_d = torch.arange(self.window_size[0])
@@ -174,11 +148,10 @@ class WindowAttention3D(nn.Module):
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
 
-        relative_position_bias = self.relative_position_bias_table[
-            self.relative_position_index[:N, :N].reshape(-1)].reshape(
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index[:N, :N].reshape(-1)].reshape(
             N, N, -1)  # Wd*Wh*Ww,Wd*Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wd*Wh*Ww, Wd*Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)  # B_, nH, N, N
+        attn = attn + relative_position_bias.unsqueeze(0) # B_, nH, N, N
 
         if mask is not None:
             nW = mask.shape[0]
@@ -198,6 +171,7 @@ class WindowAttention3D(nn.Module):
 
 class SwinTransformerBlock3D(nn.Module):
     """ Swin Transformer Block.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads.
@@ -213,7 +187,7 @@ class SwinTransformerBlock3D(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, num_heads, window_size=(2, 7, 7), shift_size=(0, 0, 0),
+    def __init__(self, dim, num_heads, window_size=(2,7,7), shift_size=(0,0,0),
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm, use_checkpoint=False):
         super().__init__()
@@ -222,7 +196,7 @@ class SwinTransformerBlock3D(nn.Module):
         self.window_size = window_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
-        self.use_checkpoint = use_checkpoint
+        self.use_checkpoint=use_checkpoint
 
         assert 0 <= self.shift_size[0] < self.window_size[0], "shift_size must in 0-window_size"
         assert 0 <= self.shift_size[1] < self.window_size[1], "shift_size must in 0-window_size"
@@ -262,7 +236,7 @@ class SwinTransformerBlock3D(nn.Module):
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=attn_mask)  # B*nW, Wd*Wh*Ww, C
         # merge windows
-        attn_windows = attn_windows.view(-1, *(window_size + (C,)))
+        attn_windows = attn_windows.view(-1, *(window_size+(C,)))
         shifted_x = window_reverse(attn_windows, window_size, B, Dp, Hp, Wp)  # B D' H' W' C
         # reverse cyclic shift
         if any(i > 0 for i in shift_size):
@@ -270,7 +244,7 @@ class SwinTransformerBlock3D(nn.Module):
         else:
             x = shifted_x
 
-        if pad_d1 > 0 or pad_r > 0 or pad_b > 0:
+        if pad_d1 >0 or pad_r > 0 or pad_b > 0:
             x = x[:, :D, :H, :W, :].contiguous()
         return x
 
@@ -279,6 +253,7 @@ class SwinTransformerBlock3D(nn.Module):
 
     def forward(self, x, mask_matrix):
         """ Forward function.
+
         Args:
             x: Input feature, tensor size (B, D, H, W, C).
             mask_matrix: Attention mask for cyclic shift.
@@ -301,11 +276,11 @@ class SwinTransformerBlock3D(nn.Module):
 
 class PatchMerging(nn.Module):
     """ Patch Merging Layer
+
     Args:
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
-
     def __init__(self, dim, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
@@ -314,6 +289,7 @@ class PatchMerging(nn.Module):
 
     def forward(self, x):
         """ Forward function.
+
         Args:
             x: Input feature, tensor size (B, D, H, W, C).
         """
@@ -341,9 +317,9 @@ class PatchMerging(nn.Module):
 def compute_mask(D, H, W, window_size, shift_size, device):
     img_mask = torch.zeros((1, D, H, W, 1), device=device)  # 1 Dp Hp Wp 1
     cnt = 0
-    for d in slice(-window_size[0]), slice(-window_size[0], -shift_size[0]), slice(-shift_size[0], None):
-        for h in slice(-window_size[1]), slice(-window_size[1], -shift_size[1]), slice(-shift_size[1], None):
-            for w in slice(-window_size[2]), slice(-window_size[2], -shift_size[2]), slice(-shift_size[2], None):
+    for d in slice(-window_size[0]), slice(-window_size[0], -shift_size[0]), slice(-shift_size[0],None):
+        for h in slice(-window_size[1]), slice(-window_size[1], -shift_size[1]), slice(-shift_size[1],None):
+            for w in slice(-window_size[2]), slice(-window_size[2], -shift_size[2]), slice(-shift_size[2],None):
                 img_mask[:, d, h, w, :] = cnt
                 cnt += 1
     mask_windows = window_partition(img_mask, window_size)  # nW, ws[0]*ws[1]*ws[2], 1
@@ -355,6 +331,7 @@ def compute_mask(D, H, W, window_size, shift_size, device):
 
 class BasicLayer(nn.Module):
     """ A basic Swin Transformer layer for one stage.
+
     Args:
         dim (int): Number of feature channels
         depth (int): Depths of this stage.
@@ -374,7 +351,7 @@ class BasicLayer(nn.Module):
                  dim,
                  depth,
                  num_heads,
-                 window_size=(1, 7, 7),
+                 window_size=(1,7,7),
                  mlp_ratio=4.,
                  qkv_bias=False,
                  qk_scale=None,
@@ -396,7 +373,7 @@ class BasicLayer(nn.Module):
                 dim=dim,
                 num_heads=num_heads,
                 window_size=window_size,
-                shift_size=(0, 0, 0) if (i % 2 == 0) else self.shift_size,
+                shift_size=(0,0,0) if (i % 2 == 0) else self.shift_size,
                 mlp_ratio=mlp_ratio,
                 qkv_bias=qkv_bias,
                 qk_scale=qk_scale,
@@ -407,19 +384,20 @@ class BasicLayer(nn.Module):
                 use_checkpoint=use_checkpoint,
             )
             for i in range(depth)])
-
+        
         self.downsample = downsample
         if self.downsample is not None:
             self.downsample = downsample(dim=dim, norm_layer=norm_layer)
 
     def forward(self, x):
         """ Forward function.
+
         Args:
             x: Input feature, tensor size (B, C, D, H, W).
         """
         # calculate attention mask for SW-MSA
         B, C, D, H, W = x.shape
-        window_size, shift_size = get_window_size((D, H, W), self.window_size, self.shift_size)
+        window_size, shift_size = get_window_size((D,H,W), self.window_size, self.shift_size)
         x = rearrange(x, 'b c d h w -> b d h w c')
         Dp = int(np.ceil(D / window_size[0])) * window_size[0]
         Hp = int(np.ceil(H / window_size[1])) * window_size[1]
@@ -437,14 +415,14 @@ class BasicLayer(nn.Module):
 
 class PatchEmbed3D(nn.Module):
     """ Video to Patch Embedding.
+
     Args:
         patch_size (int): Patch token size. Default: (2,4,4).
         in_chans (int): Number of input video channels. Default: 3.
         embed_dim (int): Number of linear projection output channels. Default: 96.
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
-
-    def __init__(self, patch_size=(2, 4, 4), in_chans=3, embed_dim=96, norm_layer=None):
+    def __init__(self, patch_size=(2,4,4), in_chans=3, embed_dim=96, norm_layer=None):
         super().__init__()
         self.patch_size = patch_size
 
@@ -468,7 +446,6 @@ class PatchEmbed3D(nn.Module):
         if D % self.patch_size[0] != 0:
             x = F.pad(x, (0, 0, 0, 0, 0, self.patch_size[0] - D % self.patch_size[0]))
 
-        # print(x.shape)
         x = self.proj(x)  # B C D Wh Ww
         if self.norm is not None:
             D, Wh, Ww = x.size(2), x.size(3), x.size(4)
@@ -478,11 +455,12 @@ class PatchEmbed3D(nn.Module):
 
         return x
 
-
+@BACKBONES.register_module()
 class SwinTransformer3D(nn.Module):
     """ Swin Transformer backbone.
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030
+
     Args:
         patch_size (int | tuple(int)): Patch size. Default: (4,4,4).
         in_chans (int): Number of input image channels. Default: 3.
@@ -505,12 +483,12 @@ class SwinTransformer3D(nn.Module):
     def __init__(self,
                  pretrained=None,
                  pretrained2d=True,
-                 patch_size=(4, 4, 4),
+                 patch_size=(4,4,4),
                  in_chans=3,
                  embed_dim=96,
                  depths=[2, 2, 6, 2],
                  num_heads=[3, 6, 12, 24],
-                 window_size=(2, 7, 7),
+                 window_size=(2,7,7),
                  mlp_ratio=4.,
                  qkv_bias=True,
                  qk_scale=None,
@@ -546,7 +524,7 @@ class SwinTransformer3D(nn.Module):
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer = BasicLayer(
-                dim=int(embed_dim * 2 ** i_layer),
+                dim=int(embed_dim * 2**i_layer),
                 depth=depths[i_layer],
                 num_heads=num_heads[i_layer],
                 window_size=window_size,
@@ -557,11 +535,11 @@ class SwinTransformer3D(nn.Module):
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                 norm_layer=norm_layer,
-                downsample=PatchMerging if i_layer < self.num_layers - 1 else None,
+                downsample=PatchMerging if i_layer<self.num_layers-1 else None,
                 use_checkpoint=use_checkpoint)
             self.layers.append(layer)
 
-        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.num_features = int(embed_dim * 2**(self.num_layers-1))
 
         # add a norm layer for each output
         self.norm = norm_layer(self.num_features)
@@ -584,10 +562,12 @@ class SwinTransformer3D(nn.Module):
 
     def inflate_weights(self, logger):
         """Inflate the swin2d parameters to swin3d.
+
         The differences between swin3d and swin2d mainly lie in an extra
         axis. To utilize the pretrained parameters in 2d model,
         the weight of swin2d models should be inflated to fit in the shapes of
         the 3d counterpart.
+
         Args:
             logger (logging.Logger): The logger used to print
                 debugging infomation.
@@ -605,11 +585,7 @@ class SwinTransformer3D(nn.Module):
         for k in attn_mask_keys:
             del state_dict[k]
 
-        state_dict['patch_embed.proj.weight'] = state_dict['patch_embed.proj.weight'].unsqueeze(2).repeat(1, 1,
-                                                                                                          self.patch_size[
-                                                                                                              0], 1,
-                                                                                                          1) / \
-                                                self.patch_size[0]
+        state_dict['patch_embed.proj.weight'] = state_dict['patch_embed.proj.weight'].unsqueeze(2).repeat(1,1,self.patch_size[0],1,1) / self.patch_size[0]
 
         # bicubic interpolate relative_position_bias_table if not match
         relative_position_bias_table_keys = [k for k in state_dict.keys() if "relative_position_bias_table" in k]
@@ -618,7 +594,7 @@ class SwinTransformer3D(nn.Module):
             relative_position_bias_table_current = self.state_dict()[k]
             L1, nH1 = relative_position_bias_table_pretrained.size()
             L2, nH2 = relative_position_bias_table_current.size()
-            L2 = (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
+            L2 = (2*self.window_size[1]-1) * (2*self.window_size[2]-1)
             wd = self.window_size[0]
             if nH1 != nH2:
                 logger.warning(f"Error in loading {k}, passing")
@@ -626,13 +602,10 @@ class SwinTransformer3D(nn.Module):
                 if L1 != L2:
                     S1 = int(L1 ** 0.5)
                     relative_position_bias_table_pretrained_resized = torch.nn.functional.interpolate(
-                        relative_position_bias_table_pretrained.permute(1, 0).view(1, nH1, S1, S1),
-                        size=(2 * self.window_size[1] - 1, 2 * self.window_size[2] - 1),
+                        relative_position_bias_table_pretrained.permute(1, 0).view(1, nH1, S1, S1), size=(2*self.window_size[1]-1, 2*self.window_size[2]-1),
                         mode='bicubic')
-                    relative_position_bias_table_pretrained = relative_position_bias_table_pretrained_resized.view(nH2,
-                                                                                                                   L2).permute(
-                        1, 0)
-            state_dict[k] = relative_position_bias_table_pretrained.repeat(2 * wd - 1, 1)
+                    relative_position_bias_table_pretrained = relative_position_bias_table_pretrained_resized.view(nH2, L2).permute(1, 0)
+            state_dict[k] = relative_position_bias_table_pretrained.repeat(2*wd-1,1)
 
         msg = self.load_state_dict(state_dict, strict=False)
         logger.info(msg)
@@ -642,11 +615,11 @@ class SwinTransformer3D(nn.Module):
 
     def init_weights(self, pretrained=None):
         """Initialize the weights in backbone.
+
         Args:
             pretrained (str, optional): Path to pre-trained weights.
                 Defaults to None.
         """
-
         def _init_weights(m):
             if isinstance(m, nn.Linear):
                 trunc_normal_(m.weight, std=.02)
@@ -676,7 +649,6 @@ class SwinTransformer3D(nn.Module):
 
     def forward(self, x):
         """Forward function."""
-        # print(x.device, x.dtype, x.shape)
         x = self.patch_embed(x)
 
         x = self.pos_drop(x)
@@ -695,188 +667,3 @@ class SwinTransformer3D(nn.Module):
         super(SwinTransformer3D, self).train(mode)
         self._freeze_stages()
 
-
-def generate_square_subsequent_mask(sz):
-    mask = (torch.triu(torch.ones((sz, sz))) == 1).transpose(0, 1)
-    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-    return mask
-
-
-def create_mask(src, tgt, PAD_IDX):
-    src_seq_len = src.shape[1]
-    tgt_seq_len = tgt.shape[1]
-
-    tgt_mask = generate_square_subsequent_mask(tgt_seq_len)#.cuda()
-    src_mask = torch.zeros((src_seq_len, src_seq_len)).type(torch.bool)#.cuda()
-
-    src_padding_mask = (src == PAD_IDX)#.cuda()#.transpose(0, 1)
-    tgt_padding_mask = (tgt == PAD_IDX)#.cuda()#.transpose(0, 1)
-    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
-
-
-class VideoCaptionSwinTransformer(nn.Module):
-    """ Video Captinoing Swin Transformer.
-            add Transformer Decoder
-        Args:
-            patch_size (int | tuple(int)): Patch size. Default: (4,4,4).
-            in_chans (int): Number of input image channels. Default: 3.
-            embed_dim (int): Number of linear projection output channels. Default: 96.
-            depths (tuple[int]): Depths of each Swin Transformer stage.
-            num_heads (tuple[int]): Number of attention head of each stage.
-            window_size (tuple[int]): Window size. Default: 7.
-            mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4.
-            qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: Truee
-            qk_scale (float): Override default qk scale of head_dim ** -0.5 if set.
-            drop_rate (float): Dropout rate.
-            attn_drop_rate (float): Attention dropout rate. Default: 0.
-            drop_path_rate (float): Stochastic depth rate. Default: 0.2.
-            norm_layer: Normalization layer. Default: nn.LayerNorm.
-            patch_norm (bool): If True, add normalization after patch embedding. Default: False.
-            frozen_stages (int): Stages to be frozen (stop grad and set eval mode).
-                -1 means not freezing any parameters.
-        """
-
-    def __init__(self, pretrained=None, pretrained2d=True, patch_size=(2, 4, 4), in_chans=3, embed_dim=128,
-                 depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], window_size=(8, 7, 7), mlp_ratio=4.,
-                 qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 drop_path_rate=0.4, norm_layer=nn.LayerNorm, patch_norm=False, frozen_stages=-1,
-                 use_checkpoint=False, encoder_dim=768, decoder_head=1, decoder_layers=1,
-                 bert_embedding=True, bert_type="bert-base-uncased", vocab_size=30522,
-                 out_drop=0.3, max_out_len=30, checkpoint_pth=None, device=torch.device("cpu")):
-        super().__init__()
-        # save info
-        self.vocab_size = vocab_size
-        self.max_out_len = max_out_len
-        self.device = device
-
-        # encoder
-        self.encoder = SwinTransformer3D(pretrained=pretrained, pretrained2d=pretrained2d,
-                                         patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
-                                         depths=depths, num_heads=num_heads, window_size=window_size,
-                                         mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                         drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
-                                         drop_path_rate=drop_path_rate, norm_layer=norm_layer,
-                                         patch_norm=patch_norm, frozen_stages=frozen_stages,
-                                         use_checkpoint=use_checkpoint).to(device)
-        load_checkpoint(self.encoder, checkpoint_pth, map_location=str(device), revise_keys=[(r'^backbone\.', '')])
-        self.avg_pool = torch.nn.AdaptiveAvgPool2d((1, 1)).to(device)
-
-        # decoder
-        decoder_layer = nn.TransformerDecoderLayer(d_model=encoder_dim, nhead=decoder_head)
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=decoder_layers).to(device)
-
-        # BERT
-        # forward(input_ids=None, attention_mask=None)
-        self.bert_embedding = bert_embedding
-        if bert_embedding is True:
-            self.embedding = BertModel.from_pretrained(bert_type).to(device)
-            self.embedding.eval()
-        else:
-            self.embedding = nn.Embedding(vocab_size, 768).to(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
-
-        # out MLP
-        self.out_drop = nn.Dropout(p=out_drop).to(device)
-        self.out_linear = nn.Linear(encoder_dim, vocab_size).to(device)
-
-    def forward(self, video, tokenized_cap=None,
-                mode="train"):
-        """
-        Input the VideoTensor(N,T,H,W,C) and VideoMask(N,T,H,W,C)
-        :param mode: "train" or "test"/"val"
-        :param tokenized_cap: dict{input_ids, attention_mask}, the input id of caption
-        :param video: Tensor(N,T,H,W,C) of frames
-        :return:
-        """
-        assert (mode == "train" and tokenized_cap is not None) or mode != "train"
-        batch_size = video.shape[0]
-
-        # Encode the video
-        mylogger.debug("video: {}".format(str(video.shape)))
-        mylogger.debug("video: {}".format(str(video.device)))
-        video = rearrange(video, 'n t h w c -> n c t h w')
-        enc_video = self.encoder(video)
-        mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # enc_video: torch.Size([2, 768, 20, 7, 7])
-        enc_video = self.avg_pool(enc_video).squeeze_(dim=4).squeeze_(dim=3)
-        enc_video = rearrange(enc_video, 'n c t-> t n c')
-        mylogger.debug("enc_video: {}".format(str(enc_video.shape)))  # torch.Size([20, 2, 7, 7, 768])
-
-        # Decode
-        if mode == "train" or "val":
-            # embedding the caption
-            # enc_caption: torch.Size([N, max_len, 768])
-            enc_caption = self.embedding(**tokenized_cap).last_hidden_state.to(self.device)
-            enc_caption = rearrange(enc_caption, 'n t c -> t n c')
-            _, tgt_mask, _, tgt_padding_mask = create_mask(enc_video,
-                                                           tokenized_cap['input_ids'],
-                                                           PAD_IDX=self.tokenizer.convert_tokens_to_ids('[PAD]'))
-            mylogger.debug("enc_caption: {}".format(enc_caption.shape))  # enc_caption: torch.Size([25, 2, 768])
-            mylogger.debug("tgt_mask: {}".format(tgt_mask.shape))  # tgt_mask: torch.Size([25, 25])
-            mylogger.debug("tgt_key_padding_mask: {}".format(tgt_padding_mask.shape))  # tgt_key_padding_mask: torch.Size([2, 25])
-            tgt_mask = tgt_mask.to(enc_caption.device)
-            tgt_padding_mask = tgt_padding_mask.to(enc_caption.device)
-
-            # dec_caption: (T, N, E)
-            dec_caption = self.decoder(tgt=enc_caption, memory=enc_video,
-                                       tgt_mask=tgt_mask,
-                                       tgt_key_padding_mask=tgt_padding_mask)
-            mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([25, 2, 768])
-
-            # result: (T, N, 1)
-            prob = self.out_linear(self.out_drop(dec_caption))  # prob torch.Size([25, 2, 30522])
-            mylogger.debug("prob: {}".format(str(prob.shape)))
-            return prob
-        else:
-            pad_id = self.tokenizer.convert_tokens_to_ids('[PAD]')
-            cls_id = self.tokenizer.convert_tokens_to_ids('[CLS]')
-            current_word = torch.ones([batch_size, 1]) * cls_id  # [B, 1]
-
-            words = []
-            cls_count = 0
-            for i in range(self.max_out_len - 1):
-                # generate mask
-                cap_padding_mask = (current_word == pad_id).transpose(1, 0).to(self.device)
-                mylogger.debug("cap_padding_mask: {}".format(str(cap_padding_mask.shape)))  # cap_padding_mask: torch.Size([2, 1])
-
-                # embedding current word
-                current_word = current_word.to(torch.int).to(self.device)
-                mylogger.debug("current_word: {}".format(str(current_word.shape)))
-                embed_current_word = self.embedding(input_ids=current_word).last_hidden_state.to(self.device)
-                mylogger.debug("embed_current_word: {}".format(str(embed_current_word.shape)))  # embed_current_word: torch.Size([2, 1, 768])
-
-                # dec_caption: (1, N, E)
-                dec_caption = self.decoder(tgt=embed_current_word, memory=enc_video,
-                                           tgt_key_padding_mask=cap_padding_mask)
-                mylogger.debug("dec_caption: {}".format(str(dec_caption.shape)))  # dec_caption: torch.Size([2, 1, 768])
-
-                prob = self.out_linear(self.out_drop(dec_caption))
-                mylogger.debug("prob: {}".format(str(prob.shape)))  # prob torch.Size([25, 2, 30522])
-                _, current_word = torch.max(prob, dim=2)
-                mylogger.debug("current_word: {}".format(str(current_word.shape)))  # current_word: torch.Size([2, 1])
-                words.append(current_word)
-
-                # break if all captions reach [CLS]
-                cls_count += torch.sum((current_word == cls_id).to(dtype=torch.int))
-                if cls_count >= batch_size:
-                    break
-            words = torch.stack(words).transpose(0, 1).squeeze_()
-            mylogger.debug("words: {}".format(str(words.shape)))
-            tokens = self.tokenizer.convert_ids_to_tokens(words)
-            result_strings = self.tokenizer.convert_tokens_to_string(tokens)
-            return result_strings
-
-
-if __name__ == '__main__':
-    from dataloader import msrvtt_collate_fn, MSR_VTT_VideoDataset
-    from torch.utils.data import DataLoader
-
-    dataset = MSR_VTT_VideoDataset(r"./data/msrvtt-train-buffer.npz",
-                                   r"/data3/lzh/MSRVTT/MSRVTT-annotations/train_val_videodatainfo.json", )
-    train_loader = DataLoader(dataset, collate_fn=msrvtt_collate_fn, batch_size=2)
-    a = next(iter(train_loader))  # B,T,H,W,C
-    vcst_model = VideoCaptionSwinTransformer(patch_size=(2, 4, 4), drop_path_rate=0.1, patch_norm=True,
-                                             window_size=(8, 7, 7), depths=(2, 2, 6, 2), embed_dim=96,
-                                             checkpoint_pth=r"./checkpoint/swin_tiny_patch244_window877_kinetics400_1k.pth",
-                                             bert_type="bert-base-uncased", pretrained2d=False)  # .cuda()
-    # y = vcst_model(a[0].float(), mode='test')
-    y = vcst_model(a[0].float(), a[1], mode='train')
