@@ -1,11 +1,10 @@
 from model.model import VideoTransformer
 from dataloader import MSRVTT, build_collate_fn
-from utils import generate_square_subsequent_mask
+from utils import generate_square_subsequent_mask, Meter
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from tqdm import tqdm
-from utils import Meter
 import os
 
 from submodules.pycocoevalcap.bleu.bleu import Bleu
