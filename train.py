@@ -24,9 +24,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 class Opt:
     # data
-    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_CLIP_fps3_feats/train"
+    train_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/train"
     train_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations-clean/train_val_videodatainfo.json"
-    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_CLIP_fps3_feats/val"
+    val_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_clip_fps2_feats/val"
     val_annotation_path = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations-clean/train_val_videodatainfo.json"
     raw_video_dir = None
     # train
@@ -38,9 +38,9 @@ class Opt:
     early_stopping_patience = 10
     # model
     bert_type = "bert-base-uncased"
-    enc_layer_num = 4
-    dec_layer_num = 4
-    head_num = 8
+    enc_layer_num = 2
+    dec_layer_num = 2
+    head_num = 4
     feat_size = 512
     emb_dim = 768
     hid_dim = 2048
@@ -51,7 +51,7 @@ class Opt:
     save_freq = 10
     load_model = None
     model_save_dir = "./checkpoint"
-    _extra_msg = "MSRVTT&CLIP3&SCE_loss"  # Dataset|Bert|pretrained
+    _extra_msg = "MSRVTT&CLIP&SCE_loss&clean&BERT&tiny"  # Dataset|Bert|pretrained
     training_name = f"b{batch_size}_lr{str(lr)[2:]}_dp{str(dropout).replace('.', '')}_emb{emb_dim}_e{enc_layer_num}" \
                     f"_d{dec_layer_num}_hd{head_num}_hi{hid_dim}_{_extra_msg}"
     log_subdir = training_name
@@ -279,7 +279,7 @@ if __name__ == "__main__":
         transformer.load_state_dict(torch.load(opt.load_model))
         st_epoch = int(re.findall("epoch([0-9]+)", opt.load_model)[0])
 
-    # transformer.load_embedding_weights(get_embedding_from_bert("bert-base-uncased"))
+    transformer.load_embedding_weights(get_embedding_from_bert("bert-base-uncased"))
     transformer = transformer.to(device)
     # transformer.freeze_bert()
 

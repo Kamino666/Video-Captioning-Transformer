@@ -1,18 +1,17 @@
 from model.model import VideoTransformer
 from dataloader import MSRVTT, build_collate_fn
-from utils import generate_square_subsequent_mask
+from utils import generate_square_subsequent_mask, Meter
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from tqdm import tqdm
-from utils import Meter
 import os
 
-from coco_caption.pycocoevalcap.bleu.bleu import Bleu
-from coco_caption.pycocoevalcap.rouge.rouge import Rouge
-from coco_caption.pycocoevalcap.cider.cider import Cider
-from coco_caption.pycocoevalcap.meteor.meteor import Meteor
-from coco_caption.pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from submodules.pycocoevalcap.bleu.bleu import Bleu
+from submodules.pycocoevalcap.rouge.rouge import Rouge
+from submodules.pycocoevalcap.cider.cider import Cider
+from submodules.pycocoevalcap.meteor.meteor import Meteor
+from submodules.pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 
 device = torch.device("cuda")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
