@@ -127,12 +127,6 @@ def single_video_prediction(args):
 
 
 if __name__ == "__main__":
-    """
-    一个可以运行的命令
-    python test_video -v ./data/test3.mp4 
-    -m ./checkpoint/b64_lr0001_dp03_emb768_e4_d4_hd8_hi2048_MSRVTT&CLIP&SCE_loss_earlystop.pth 
-    --feat CLIP --fps 3 --gpu
-    """
     start_time = timer()
     parser = argparse.ArgumentParser()
     # data args

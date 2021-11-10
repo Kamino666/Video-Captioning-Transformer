@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from .Embedding import PositionalEmbedding
-from .MME import MultiModalEmbedding
 from torch.nn import Transformer
 from transformers import BertModel, AutoTokenizer
 
@@ -35,7 +34,7 @@ class VideoTransformer(nn.Module):
                                        dropout=dropout,
                                        activation="gelu",
                                        batch_first=True)
-        self.tokenizer = AutoTokenizer.from_pretrained("/data3/lzh_3/video-captioning-swin-transformer/data/tk/")
+        self.tokenizer = AutoTokenizer.from_pretrained(bert_type)
         pad_id = self.tokenizer.convert_tokens_to_ids("[PAD]")
         vocab_size = self.tokenizer.vocab_size
         self.generator = nn.Linear(emb_size, vocab_size)
@@ -102,65 +101,3 @@ class VideoTransformer(nn.Module):
     def load_embedding_weights(self, weight):
         assert self.tgt_to_emb.weight.shape == weight.shape
         self.tgt_to_emb.weight = weight
-
-
-class MMVideoTransformer(nn.Module):
-    def __init__(self,
-                 num_encoder_layers: int,
-                 num_decoder_layers: int,
-                 feat_dims: dict,
-                 d_model: int,
-                 nhead: int,
-                 bert_type: str = "bert-base-uncased",
-                 dim_feedforward: int = 512,
-                 dropout: float = 0.1,
-                 activation: str = "gelu",
-                 device: torch.device = torch.device("cuda"),
-                 agg_method: str = "avgpooling",
-                 ):
-        super(MMVideoTransformer, self).__init__()
-        self.d_model = d_model
-        self.device = device
-
-        tokenizer = AutoTokenizer.from_pretrained(bert_type)
-        self.tokenizer = tokenizer
-        pad_id = tokenizer.convert_tokens_to_ids("[PAD]")
-        vocab_size = tokenizer.vocab_size
-        self.tgt_to_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
-        self.positional_encoding = PositionalEmbedding(d_model, dropout=dropout)
-
-        self.mme = MultiModalEmbedding(d_model, feat_dims, dropout, agg_method=agg_method)
-
-        self.mmt_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, batch_first=True),
-            num_encoder_layers,
-            nn.LayerNorm(d_model)
-        )
-        self.mmt_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, batch_first=True),
-            num_decoder_layers,
-            nn.LayerNorm(d_model)
-        )
-
-        self.generator = nn.Linear(d_model, self.tokenizer.vocab_size)
-
-    def forward(self,
-                feats_dict: dict,
-                feats_padding_mask_dict: dict,
-                tgt: Tensor,
-                tgt_mask: Tensor,
-                tgt_padding_mask: Tensor):
-        # video features
-        features, feats_padding_masks, lengths = self.mme(feats_dict, feats_padding_mask_dict)
-        memories = self.mmt_encoder(
-            features, mask=None, src_key_padding_mask=feats_padding_masks
-        )
-
-        # caption embeddings
-        caption_emb = self.positional_encoding(self.tgt_to_emb(tgt))
-        output = self.mmt_decoder(
-            caption_emb, memories, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_padding_mask,
-            memory_mask=None, memory_key_padding_mask=feats_padding_masks
-        )
-
-        return self.generator(output)

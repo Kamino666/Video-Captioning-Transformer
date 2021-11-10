@@ -19,10 +19,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 class EvalOpt:
     # eval
-    video_feat_dir = r"/data3/lzh_3/video-captioning-swin-transformer/data/msrvtt_CLIP_fps3_feats/val"
-    annotation_file = r"/data3/lzh_3/video-captioning-swin-transformer/data/MSRVTT-annotations/train_val_videodatainfo.json"
+    video_feat_dir = r"验证集视频特征路径"
+    annotation_file = r"数据集标注文件"
     tokenizer_type = "bert-base-uncased"
-    model_path = r"./checkpoint/b64_lr0001_dp03_emb768_e4_d4_hd8_hi2048_MSRVTT&CLIP3&SCE_los&clean_earlystop.pth"
+    model_path = r"模型路径"
     max_len = 30
     batch_size = 32
     # model
@@ -271,7 +271,7 @@ if __name__ == "__main__":
     transformer.eval()
     transformer = transformer.to(device)
     # load data
-    tokenizer = AutoTokenizer.from_pretrained("/data3/lzh_3/video-captioning-swin-transformer/data/tk/")
+    tokenizer = AutoTokenizer.from_pretrained(opt.bert_type)
     opt.start_id = tokenizer.convert_tokens_to_ids("[CLS]")
     opt.end_id = tokenizer.convert_tokens_to_ids("[SEP]")
     opt.pad_id = tokenizer.convert_tokens_to_ids("[PAD]")

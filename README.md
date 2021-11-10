@@ -1,5 +1,7 @@
 # Video Captioning Transformer
 
+2021.11.10更新：更新了文档和说明，修改了一部分bug
+
 ## 引言
 
 这是一个使用Pytorch实现的**视频描述生成**深度学习模型。
@@ -34,7 +36,7 @@
 
 ### 环境
 
-本文实验运行环境为 Ubuntu 16.04，平台为Python3.7.0，使用 Pytorch 深度学习框架，使用一张 GTX TITAN X显卡进行训练（假如要使用coco eval评估则需要按照java jre）。使用的Python库如下：
+本文实验运行环境为 Ubuntu 16.04，平台为Python3.7.0，使用 Pytorch 深度学习框架，使用一张 GTX TITAN X显卡进行训练（**假如要使用coco eval评估则需要安装java jre**）。使用的Python库如下：
 
 ```
 torch
@@ -45,6 +47,7 @@ timeit
 mmcv
 numpy
 pathlib
+PIL
 ```
 
 ### 预训练模型
@@ -58,27 +61,37 @@ pathlib
 | M-CLIP-SCEloss-BERT-base | 使用SCEloss和BERT权重 | 28.7       |
 | M-CLIP-SCEloss-base      | 使用SCEloss           | **28.8**   |
 
-### 数据集准备
+### 数据准备
 
-我们使用MSR-VTT数据集，由于版权原因不放出原视频，我们提供提取好的[CLIP特征 oyrt](https://pan.baidu.com/s/1mNFhymugYV58Z55F--e9cA)。
+我们使用MSR-VTT数据集，由于版权原因不放出原视频，我们提供提取好的[CLIP特征 oyrt](https://pan.baidu.com/s/1mNFhymugYV58Z55F--e9cA)（这个博主总结的数据集中可以下载到[数据集](https://shiyaya.github.io/2019/02/22/video-caption-dataset/)）。
 
-提取CLIP特征既可以使用[官方CLIP库](https://github.com/openai/CLIP)，也可以使用[Kamino666/video_features](https://github.com/Kamino666/video_features)，提取特征抽帧为fps3，resize为224*224，使用CLIP的CLIP-ViT-B/32版本。
+提取CLIP特征请先按照[官方CLIP库](https://github.com/openai/CLIP)的说明配置好环境，并使用submodules中的video_features库提取特征，关于这个库的更多说明可以参考[Kamino666/video_features](https://github.com/Kamino666/video_features)。
 
-## 训练
+CLIP提取特征参数为：抽帧fps3，resize为224*224，使用CLIP的CLIP-ViT-B/32版本。
+
+## 训练 train
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python train.py
 ```
 
-目前配置文件存储在train.py的Opt类中。详情查看代码注释。
+训练目前只支持单卡训练，训练配置存储在train.py的Opt类中。详情查看代码注释。
 
-## 评估
+> train_feat_dir = r"训练集的特征路径"
+> train_annotation_path = r"数据集标注文件"
+> val_feat_dir = r"验证集的特征路径"
+> val_annotation_path = r"数据集标注文件,同上"
+>
+> 默认训练参数如下：
+> batch_size = 64 lr = 1e-4 enc_layer_num = 4ndec_layer_num = 4 head_num = 8 feat_size = 512 emb_dim = 768 hid_dim = 2048 dropout = 0.3 epoch_num = 30 use_bert = False
+
+## 评估 validation
 
 ```bash
 CUDA_VISIBLE_DEVICES=2 python eval_batch_video.py  # 需要java
 ```
 
-同样，配置在eval_batch_video.py的EvalOpt类中。
+评估时请先配置好java jre环境，使用[salaniz/pycocoevalcap](https://github.com/salaniz/pycocoevalcap)的代码，会给出METEOR、CIDEr、BLEU、ROUGH_L这几个指标。同样，评估配置存储在eval_batch_video.py的EvalOpt类中，需保证评估配置符合模型训练的配置。
 
 ## 单视频预测
 
@@ -91,7 +104,7 @@ python test_video.py \
     --gpu
 ```
 
- 除了上述参数，在test_video.py里还可以找到更多说明。
+ **目前只支持`--feat CLIP`的单视频预测**。除了上述参数，在test_video.py里还可以找到更多说明。
 
 ## 效果展示
 
@@ -105,6 +118,14 @@ MSR-VTT数据集内视频：
 Bilibili上随机搜索得到的视频：
 
 暂无，正在测试中。
+
+## 常见问题
+
+Q：下载来自hugging face的模型失败
+
+A：以`bert-base-uncased`模型为例，在[hugging face的模型网站上的下载页面](https://huggingface.co/bert-base-uncased/tree/main)可以看到一系列文件，如果是模型下载失败`BertModel.from_pretrained()`，则下载`.bin`文件，并把参数改成`.bin`的路径；如果是tokenizer下载失败`AutoTokenizer.from_pretrained()`，则下载`config.json`、`tokenizer.json`、`tokenizer_config.json`、`vocab.txt`四个文件，并把参数改成这四个文件所处目录路径。**如果不想这么麻烦，可以科学上网。**
+
+
 
 ## 致谢
 
