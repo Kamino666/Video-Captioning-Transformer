@@ -1,0 +1,96 @@
+{
+  "data": {
+    "train": {
+      "feat_dir": [
+        "./data/msrvtt_clip4clip_feats/train"
+      ],
+      "annotation_path": "./data/MSRVTT-annotations/train_val_videodatainfo.json",
+      "mode": "by_caption",
+      "split_mode": "train",
+      "_debug": false,
+      "_debug_num": 4000,
+      "batch_size": 64
+    },
+    "validation": {
+      "feat_dir": [
+        "./data/msrvtt_clip4clip_feats/val"
+      ],
+      "annotation_path": "./data/MSRVTT-annotations/train_val_videodatainfo.json",
+      "mode": "by_caption",
+      "split_mode": "validate",
+      "_debug": false,
+      "_debug_num": 400,
+      "batch_size": 64
+    },
+    "eval": {
+      "feat_dir": [
+        "./data/msrvtt_clip4clip_feats/val"
+      ],
+      "annotation_path": "./data/MSRVTT-annotations/train_val_videodatainfo.json",
+      "mode": "by_video",
+      "split_mode": "validate",
+      "_debug": false,
+      "_debug_num": 400,
+      "batch_size": 1
+    },
+    "video_dir": null
+  },
+  "train": {
+    "task": "caption",
+    "optimizer": {
+      "name": "adam",
+      "learning_rate": 1e-4,
+      "beta": [0.9, 0.999],
+      "weight_decay": 0,
+      "momentum": null,
+      "lr_scheduler": {
+        "name": "CosineAnnealingLR",
+        "T_max": 8,
+        "eta_min": 1e-5
+      }
+    },
+    "earlystop": 5,
+    "epoch": 30,
+    "save_frequency": 100,
+    "save_dir": "./checkpoint",
+    "log_dir": "./log",
+    "tag": "modal_clip4clip",
+    "metric_earlystop": true
+  },
+  "test": {
+    "max_length": 30
+  },
+  "model": {
+    "modal": ["CLIP4Clip"],
+    "modal_shape": [512],
+    "tokenizer": "bert-base-uncased",
+    "text_enc_type": "CLIP",
+    "embed_dim": 768,
+    "dropout": 0.3,
+    "loss_beta": 0.5,
+    "matching": {
+      "enable_tem": false,
+      "matching_loss": "CSL"
+    },
+    "activation": "gelu",
+    "video_encoder": {
+      "layer": 1,
+      "nhead": 8,
+      "feedforward": 2048,
+      "mme": {
+        "temporal": "encoding",
+        "modal_different": true,
+        "do_norm": false,
+        "aggregation": "avg"
+      },
+      "aoa": false
+    },
+    "caption_decoder": {
+      "layer": 3,
+      "nhead": 8,
+      "feedforward": 2048,
+      "sce_loss_alpha": 0.5
+    },
+    "pretrained_model": null
+  }
+}
