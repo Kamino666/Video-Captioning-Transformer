@@ -9,17 +9,15 @@
 
 视频描述生成任务指的是：输入一个视频，输出一句描述整个视频内容的文字（前提是视频较短且可以用一句话来描述）。本repo主要目的是帮助视力障碍者欣赏网络视频、感知周围环境，促进“无障碍视频”的发展。
 
-:happy: 这个repo是**第七届“互联网+”北京赛区三等奖**项目**「以声绘影——基于人工智能的无障碍视频自动生成技术」**的一部分。
+:yum: 这个repo是**第七届“互联网+”北京赛区三等奖**项目「**以声绘影——基于人工智能的无障碍视频自动生成技术**」的一部分。
 
-:happy: 这个repo是北京市级大学生创新训练项目**「基于深度学习的视频画面描述及无障碍视频研究」**的一部分。
+:yum: 这个repo是北京市级大学生创新训练项目「**基于深度学习的视频画面描述及无障碍视频研究**」的一部分。
 
-:happy: 这个repo的一部分已登记**软件著作权**2022SR0269902。
+:yum: 这个repo的一部分已登记**软件著作权**2022SR0269902。
 
 :warning: 本repo遵守Apache-2.0 License，详情请看库内LICENSE文件。不包括使用的数据集版权、submodule子目录下任何文件的版权。
 
 > 当视频太长或较复杂时效果可能就很差了，针对长视频，目前有密集视频描述生成任务，即Dense Video Captioning，本项目暂时不涉及，但欢迎魔改这个repo。
-
-- [ ] 
 
 ## 模型架构
 
@@ -45,16 +43,12 @@ pathlib
 PIL
 ```
 
-### 预训练模型
+### 已经训练好的模型
 
-
-
-模型命名方式为`[数据集名字]-[一些训练配置]-[模型大小base]`，base模型大概400MB。
-
-| 模型名字                 | 模型描述              | METEOR指标 |
-| ------------------------ | --------------------- | ---------- |
-| M-CLIP-SCEloss-BERT-base | 使用SCEloss和BERT权重 | 28.7       |
-| M-CLIP-SCEloss-base      | 使用SCEloss           | **28.8**   |
+| 训练数据集 | Bleu@4 | METEOR | ROUGE_L | CIDEr | 下载                                                         | 配置文件                                                     |
+| ---------- | ------ | ------ | ------- | ----- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| MSVD       | 64.8   | 43.3   | 81.3    | 137.4 | [百度网盘zmr4](https://pan.baidu.com/s/1tBw8dOjkdSfKcBhub4EDeA ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_msvd_config.json) |
+| MSR-VTT    | 50.4   | 32.1   | 66.2    | 62.8  | [百度网盘xy7e](https://pan.baidu.com/s/1ZC3QLbETBRmqKPtUgFQf2Q ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_config.json) |
 
 ### 先尝试个视频康康？
 
@@ -85,7 +79,19 @@ python predict.py -c <config> -m <model> -v <video> \
 
 ### 数据集准备
 
-本repo使用MSR-VTT数据集，由于版权原因不放出原视频（但可以在[这里](https://github.com/ArrowLuo/CLIP4Clip)和[这里](https://shiyaya.github.io/2019/02/22/video-caption-dataset/)找到下载的地方）。我们提供提取好的[CLIP特征 oyrt](https://pan.baidu.com/s/1mNFhymugYV58Z55F--e9cA)，特征的提取方式见[这里]
+本repo使用MSR-VTT数据集和MSVD数据集
+
++ 原始视频
+
+  由于版权原因无法放出原视频（但可以在[这里](https://github.com/ArrowLuo/CLIP4Clip)和[这里](https://shiyaya.github.io/2019/02/22/video-caption-dataset/)找到下载的地方）。
+
++ 特征文件
+
+  [百度网盘 iopo](https://pan.baidu.com/s/1h0r0aOXFPUSImrjXvgNwFQ )包含了两个数据集的标注和特征
+
++ 特征提取方法
+
+  [这里]
 
 ### 评估模型
 
@@ -114,7 +120,25 @@ python -m torch.distributed.run --nproc_per_node 4 train.py \
 
 ### 配置文件说明
 
-[这个文件]
+配置文件是json格式的一个文件，在训练和预测时都需要用到。简单的说明如下：（部分配置可能不起作用或令人迷惑，是实验时添加的部分）
+
+```
+├── data
+│   ├── train  训练数据
+│   ├── validation  验证数据（用来计算loss）
+│   └── eval  验证数据（用来计算Bleu等）
+├── train  和训练方法有关的参数
+│   ├── earlystop  earlystop的patience
+│   ├── epoch      最大epoch数
+│   ├── save_dir   模型保存路径
+│   ├── log_dir    日志保存路径（tensorboard读取）
+│   └── tag        模型保存名称
+├── test
+└── model  和模型结构有关的参数
+    ├── video_encoder    Transformer编码器的参数
+    ├── caption_decoder  Transformer解码器的参数
+    └── modal_shape      模态的维度
+```
 
 ### 数据集内视频结果
 
