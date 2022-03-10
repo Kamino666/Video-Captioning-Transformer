@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from torch import Tensor
-from typing import Optional
+from typing import Optional, List
 import argparse
 import pathlib
 import matplotlib.pyplot as plt
@@ -19,7 +19,23 @@ def check_validity(args):
 
 
 def extract_feat(args):
-    pass
+    # useful attributes
+    args.extract_method = args.ext_type
+    args.feature_type = args.feat_type[0]
+    args.video_paths = [args.video]
+    # useless attribute
+    args.extraction_fps = None
+    args.file_with_video_paths = None
+    args.flow_dir = None
+    args.flow_paths = None
+    args.video_dir = None
+    args.on_extraction = None
+
+    from submodules.video_features.models.CLIP.extract_clip import ExtractCLIP
+    extractor = ExtractCLIP(args, external_call=True)
+    feats_list = extractor(torch.zeros([1], dtype=torch.long))[0][args.feature_type]
+    feats_list = torch.from_numpy(feats_list).unsqueeze(0)
+    return [feats_list]
 
 
 # Code from Pytorch TransformerDecoderLayer forward()
@@ -57,14 +73,14 @@ def attn_forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Optional[Tensor] =
     # mha: (1, L, S)
     if hasattr(self, 'mha'):
         self.mha = torch.cat([self.mha, mha[:, -1:, :]], dim=1)
-        print("yes")
+        # print("yes")
     else:
         self.mha = mha
     return tgt
 
 
-def visualize(layers: list[torch.nn.TransformerDecoderLayer],
-              caption: Optional[str] = None, feat_lens: Optional[list[int]] = None):
+def visualize(layers: List[torch.nn.TransformerDecoderLayer],
+              caption: Optional[str] = None, feat_lens: Optional[list] = None):
     """
     :param feat_lens: length of each feature
     :param caption: Caption of video
@@ -85,7 +101,7 @@ def visualize(layers: list[torch.nn.TransformerDecoderLayer],
     seaborn.heatmap(
         avg_map.numpy().T,
         xticklabels=caption.split(' ') + ['SEP'],
-        yticklabels=['G'] + ['m1'] * feat_lens[0] + ['G'] + ['m2'] * feat_lens[1],
+        # yticklabels=['G'] + ['m1'] * feat_lens[0] + ['G'] + ['m2'] * feat_lens[1],
         annot=True
     )
     plt.show()
@@ -98,6 +114,7 @@ def predict(cfg, local_args):
     else:
         feats = [torch.tensor(np.load(i), dtype=torch.float32, device=local_args.device).unsqueeze(0)
                  for i in local_args.features]
+    # print(type(feats))
     feat_lens = [i.shape[1] for i in feats]
     # Build model
     model = MMT4Caption(cfg['model'], device=local_args.device).to(local_args.device)
@@ -115,7 +132,10 @@ def predict(cfg, local_args):
     model.eval()
     result = v2t_batch(model, feats, None, max_len=cfg['test']['max_length'], local_args=local_args)[0]
     # Output
-    video_id = pathlib.Path(local_args.features[0]).stem
+    if local_args.features is not None:
+        video_id = pathlib.Path(local_args.features[0]).stem
+    else:
+        video_id = pathlib.Path(local_args.video).stem
     print(f"{video_id}\t:{result}")
     # [Optional] visualize attention maps
     if local_args.vis_attn:
@@ -134,9 +154,9 @@ if __name__ == "__main__":
     input_group.add_argument("-v", "--video", type=str, help="The path of input video")
     input_group.add_argument("-f", "--features", nargs='+', type=str, help="The paths of input features of a video")
     # if choose -v
-    parser.add_argument("--feat_type", nargs='+', type=str, choices=["CLIP", "I3D"],
+    parser.add_argument("--feat_type", nargs='+', type=str, choices=["CLIP", "I3D", "CLIP4CLIP-ViT-B-32"],
                         help="the type of feature extractor(s)")
-    parser.add_argument("--ext_type", nargs='+', type=str,
+    parser.add_argument("--ext_type", type=str,
                         help="How to extract video frames.\n Format: [type]_[param]\n Example: fps_2 fix_20 tsn_12")
 
     # device argument
