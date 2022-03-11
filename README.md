@@ -91,7 +91,7 @@ python predict.py -c <config> -m <model> -v <video> \
 
 + 特征提取方法
 
-  [这里]
+  特征提取使用我的另一个repo：[Kamino666/video_features](https://github.com/Kamino666/video_features)。
 
 ### 评估模型
 
@@ -149,9 +149,17 @@ python -m torch.distributed.run --nproc_per_node 4 train.py \
 
 ## 常见问题
 
-Q：下载来自hugging face的模型失败
++ Q：下载来自hugging face的模型失败
++ A：以`bert-base-uncased`模型为例，在[hugging face的模型网站上的下载页面](https://huggingface.co/bert-base-uncased/tree/main)可以看到一系列文件，如果是模型下载失败`BertModel.from_pretrained()`，则下载`.bin`文件，并把参数改成`.bin`的路径；如果是tokenizer下载失败`AutoTokenizer.from_pretrained()`，则下载`config.json`、`tokenizer.json`、`tokenizer_config.json`、`vocab.txt`四个文件，并把参数改成这四个文件所处目录路径。**如果不想这么麻烦，可以科学上网。**
 
-A：以`bert-base-uncased`模型为例，在[hugging face的模型网站上的下载页面](https://huggingface.co/bert-base-uncased/tree/main)可以看到一系列文件，如果是模型下载失败`BertModel.from_pretrained()`，则下载`.bin`文件，并把参数改成`.bin`的路径；如果是tokenizer下载失败`AutoTokenizer.from_pretrained()`，则下载`config.json`、`tokenizer.json`、`tokenizer_config.json`、`vocab.txt`四个文件，并把参数改成这四个文件所处目录路径。**如果不想这么麻烦，可以科学上网。**
++ Q：这个模型多大？
++ A：主要参数是总共4层的Transformer。
+
+## TODO
+
++ 微信小程序正在开发中
++ 支持中文和VATEX数据集
++ 祈祷论文不要被拒:pray:
 
 ## 致谢
 
