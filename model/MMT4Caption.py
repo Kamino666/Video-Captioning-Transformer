@@ -81,17 +81,15 @@ class MMT4Caption(nn.Module):
                 modal_different=model_config['video_encoder']['mme'].get('modal_different', True),
                 temporal_type=model_config['video_encoder']['mme'].get('temporal', 'encoding'),
                 do_norm=model_config['video_encoder']['mme'].get('do_norm', False),
-                aoa=model_config['video_encoder'].get('aoa', False),
                 device=device
             )
-        self.matching = Matching((model_config['embed_dim'], self.text_encoder.dim),
-                                 enable_tem=model_config['matching']['enable_tem'],
-                                 loss=model_config['matching']['matching_loss'],
-                                 loss_tem=model_config['matching'].get("temperature", None),
-                                 device=device)
+        if model_config.get('matching', None) is not None:
+            self.matching = Matching((model_config['embed_dim'], self.text_encoder.dim),
+                                     enable_tem=model_config['matching']['enable_tem'],
+                                     loss=model_config['matching']['matching_loss'],
+                                     loss_tem=model_config['matching'].get("temperature", None),
+                                     device=device)
 
-        # if 'univl' in model_config['caption_decoder'] and model_config['caption_decoder']['univl'] is not None:
-        #     self.load_cap_decoder_from_univl(model_config['caption_decoder']['univl'])
         # if model_config['pretrained_model'] is not None:
         #     self.load_state_dict(torch.load(model_config['pretrained_model'], map_location=self.device), strict=False)
 

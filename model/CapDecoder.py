@@ -15,18 +15,9 @@ class CapDecoder(nn.Module):
         super().__init__()
         self.device = device
         if custom_decoder_type is None:
-            decoder_layer = nn.TransformerDecoderLayer(embed_dim, nhead, dim_feedforward, dropout, activation=activation, batch_first=True)
-            # decoder_layer = nn.TransformerDecoderLayer(embed_dim, nhead, dim_feedforward, dropout, activation=activation)
+            decoder_layer = nn.TransformerDecoderLayer(embed_dim, nhead, dim_feedforward, dropout,
+                                                       activation=activation, batch_first=True)
             self.decoder = nn.TransformerDecoder(decoder_layer, num_layers, nn.LayerNorm(embed_dim))
-        elif custom_decoder_type == 'selective':
-            pass
-            decoder_layer = SelectiveDecoderLayer(embed_dim, nhead, dim_feedforward, dropout,
-                                                  activation=activation, batch_first=True)
-            self.decoder = nn.TransformerDecoder(decoder_layer, num_layers, nn.LayerNorm(embed_dim))
-        # else:
-        #     decoder_layer = AOA_TransformerDecoderLayer(embed_dim, nhead, dim_feedforward, dropout,
-        #                                                 activation=activation, batch_first=True)
-        #     self.decoder = nn.TransformerDecoder(decoder_layer, num_layers, nn.LayerNorm(embed_dim))
         else:
             decoder_layer = VisTransformerDecoderLayer(embed_dim, nhead, dim_feedforward, dropout,
                                                        activation=activation, batch_first=True)

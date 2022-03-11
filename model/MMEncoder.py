@@ -211,7 +211,6 @@ class MultiModalEncoder(nn.Module):
                  dim_feedforward: int = 2048, num_encoder_layers: int = 4,
                  dropout: float = 0.1, activation: str = "gelu", global_type: str = "avg",
                  modal_different: bool = True, temporal_type: str = "embedding", do_norm: bool = False,
-                 aoa: bool = False,
                  device=torch.device("cuda"),
                  ):
         super(MultiModalEncoder, self).__init__()
@@ -234,12 +233,8 @@ class MultiModalEncoder(nn.Module):
             self.modal_emb = ModalEmbedding(self.num_modal, modal_different=modal_different,
                                             d_model=d_model, device=device)
         # Transformer Encoder
-        if aoa is True:
-            encoder_layer = AOA_TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout,
-                                                        activation=activation, batch_first=True)
-        else:
-            encoder_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout,
-                                                       activation=activation, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout,
+                                                   activation=activation, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers, nn.LayerNorm(d_model))
         # Normalization & Dropout
         if do_norm:

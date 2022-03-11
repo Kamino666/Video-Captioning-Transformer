@@ -6,6 +6,10 @@ from torch import Tensor
 from .loss import ClipSymmetricalLoss, ClipSymmetricalLoss_WithDualSoftmax
 from typing import Optional, Tuple
 
+"""
+进行 joint embedding 多任务学习的类
+"""
+
 
 class Matching(nn.Module):
     def __init__(self, vt_shape: Tuple[int, int], enable_tem=False, loss="CSL", loss_tem=None,

@@ -21,7 +21,7 @@
 
 ## 模型架构
 
-[CLIP](http://proceedings.mlr.press/v139/radford21a)是一个视觉-语言的大规模预训练模型，[Clip4clip](https://arxiv.org/abs/2104.08860)是将CLIP运用在视频检索任务的一种方法，[SCE-loss](https://openaccess.thecvf.com/content_ICCV_2019/html/Wang_Symmetric_Cross_Entropy_for_Robust_Learning_With_Noisy_Labels_ICCV_2019_paper.html)是一个针对噪声较大数据集的损失函数。
+如下图：[CLIP](http://proceedings.mlr.press/v139/radford21a)是一个视觉-语言的大规模预训练模型，[Clip4clip](https://arxiv.org/abs/2104.08860)是将CLIP运用在视频检索任务的一种方法，[SCE-loss](https://openaccess.thecvf.com/content_ICCV_2019/html/Wang_Symmetric_Cross_Entropy_for_Robust_Learning_With_Noisy_Labels_ICCV_2019_paper.html)是一个针对噪声较大数据集的损失函数。我们通过CLIP提取视频的特征，然后作为输入送入Transformer中，输出Caption，训练阶段用SCE-loss优化。
 
 ![](https://kamino-img.oss-cn-beijing.aliyuncs.com/20220310172214.png)
 
@@ -120,7 +120,7 @@ python -m torch.distributed.run --nproc_per_node 4 train.py \
 
 ### 配置文件说明
 
-配置文件是json格式的一个文件，在训练和预测时都需要用到。简单的说明如下：（部分配置可能不起作用或令人迷惑，是实验时添加的部分）
+配置文件是json格式的一个文件，在训练和预测时都需要用到。简单的说明如下：（部分配置可能不起作用或令人迷惑，是实验时添加的其他部分，可用性暂无法保证）
 
 ```
 ├── data
