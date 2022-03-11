@@ -45,10 +45,12 @@ PIL
 
 ### 已经训练好的模型
 
+模型在训练集集上训练，根据验证集进行earlystop，下表结果为测试集结果。
+
 | 训练数据集 | Bleu@4 | METEOR | ROUGE_L | CIDEr | 下载                                                         | 配置文件                                                     |
 | ---------- | ------ | ------ | ------- | ----- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| MSVD       | 64.8   | 43.3   | 81.3    | 137.4 | [百度网盘zmr4](https://pan.baidu.com/s/1tBw8dOjkdSfKcBhub4EDeA ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_msvd_config.json) |
-| MSR-VTT    | 50.4   | 32.1   | 66.2    | 62.8  | [百度网盘xy7e](https://pan.baidu.com/s/1ZC3QLbETBRmqKPtUgFQf2Q ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_config.json) |
+| MSVD       | 58.0   | 39.9   | 77.0    | 113.8 | [百度网盘zmr4](https://pan.baidu.com/s/1tBw8dOjkdSfKcBhub4EDeA ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_msvd_config.json) |
+| MSR-VTT    | 48.1   | 31.1   | 65.1    | 60.2  | [百度网盘xy7e](https://pan.baidu.com/s/1ZC3QLbETBRmqKPtUgFQf2Q ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_config.json) |
 
 ### 先尝试个视频康康？
 
@@ -87,7 +89,7 @@ python predict.py -c <config> -m <model> -v <video> \
 
 + 特征文件
 
-  [百度网盘 iopo](https://pan.baidu.com/s/1h0r0aOXFPUSImrjXvgNwFQ )包含了两个数据集的标注和特征
+  [百度网盘 aupi](https://pan.baidu.com/s/1xG5F856VNEjNXD6JcG_4NA?pwd=aupi )包含了两个数据集的标注和特征
 
 + 特征提取方法
 
@@ -104,6 +106,7 @@ python eval.py -c <config> -m <model> [--gpu/--cpu]
 ```
 
 + java_root是java的路径，精确到bin目录，假如已经配置好环境变量可以忽略此项。
++ 评估模型时配置文件中data下eval属性需要把验证集改成测试集。
 
 ### 训练模型
 
