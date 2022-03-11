@@ -1,139 +1,184 @@
 # Video Captioning Transformer
 
-2021.11.10更新：更新了文档和说明，修改了一部分bug
++ 2021.11.10更新：更新了文档和说明，修改了一部分bug
++ 2022.3.10更新：重构了大部分代码，更新了文档和说明
 
 ## 引言
 
-这是一个使用Pytorch实现的**视频描述生成**深度学习模型。
+这是一个基于Pytorch平台、Transformer框架实现的**视频描述生成 (Video Captioning)** 深度学习模型。
 
-视频描述生成任务就是：输入一个视频，可以输出一句描述整个视频内容的文字（当视频太长或较复杂时效果可能就很差了，针对长视频，目前有密集视频描述生成任务，即Dense Video Captioning，本项目暂时不涉及）。本项目主要目的是帮助视力障碍者欣赏网络视频、感知周围环境，促进“无障碍视频”的发展。
+视频描述生成任务指的是：输入一个视频，输出一句描述整个视频内容的文字（前提是视频较短且可以用一句话来描述）。本repo主要目的是帮助视力障碍者欣赏网络视频、感知周围环境，促进“无障碍视频”的发展。
 
-本项目实现了：
+:yum: 这个repo是**第七届“互联网+”北京赛区三等奖**项目「**以声绘影——基于人工智能的无障碍视频自动生成技术**」的一部分。
 
-- [x] 从视频到英文文字描述的全流程
-- [x] 预训练模型的提供
-- [x] 预训练模型的训练参数、代码等
-- [x] 一些样例
-- [x] 视频描述生成的微信小程序Demo（由于缺乏算力和预算，暂不开放）
+:yum: 这个repo是北京市级大学生创新训练项目「**基于深度学习的视频画面描述及无障碍视频研究**」的一部分。
 
-本项目尚未实现但预计实现的：
+:yum: 这个repo的一部分已登记**软件著作权**2022SR0269902。
 
-- [ ] 从视频到中文文字及语音播报的全流程
-- [ ] 密集视频描述生成
-- [ ] 模型训练的可视化
-- [ ] 论文
-- [ ] 项目主页
+:warning: 本repo遵守Apache-2.0 License，详情请看库内LICENSE文件。不包括使用的数据集版权、submodule子目录下任何文件的版权。
 
-**注意！：本项目拥有版权，遵守Apache-2.0 License，详情请看库内LICENSE文件。但是不包括使用的数据集版权、submodule子目录下任何文件的版权。**
+> 当视频太长或较复杂时效果可能就很差了，针对长视频，目前有密集视频描述生成任务，即Dense Video Captioning，本项目暂时不涉及，但欢迎魔改这个repo。
 
-## 模型总结
+## 模型架构
 
-模型基于Transformer架构，对结构暂未做太大的改变（如下图）。视频输入经过抽帧之后，按帧提取CLIP特征，同时文本侧使用BERT的Embedding层权重，之后两路特征送入Transformer，输出概率使用SCE loss计算损失。
+如下图：[CLIP](http://proceedings.mlr.press/v139/radford21a)是一个视觉-语言的大规模预训练模型，[Clip4clip](https://arxiv.org/abs/2104.08860)是将CLIP运用在视频检索任务的一种方法，[SCE-loss](https://openaccess.thecvf.com/content_ICCV_2019/html/Wang_Symmetric_Cross_Entropy_for_Robust_Learning_With_Noisy_Labels_ICCV_2019_paper.html)是一个针对噪声较大数据集的损失函数。我们通过CLIP提取视频的特征，然后作为输入送入Transformer中，输出Caption，训练阶段用SCE-loss优化。
 
-![中文baseline](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016133947.png)
+![](https://kamino-img.oss-cn-beijing.aliyuncs.com/20220310172214.png)
 
-## 开始
+## 快速上手:hugs:
 
-### 环境
-
-本文实验运行环境为 Ubuntu 16.04，平台为Python3.7.0，使用 Pytorch 深度学习框架，使用一张 GTX TITAN X显卡进行训练（**假如要使用coco eval评估则需要安装java jre**）。使用的Python库如下：
+### 开发环境
 
 ```
-torch
-transformers
+Java JRE (用来调用MS COCO eval server进行Bleu等评估)
+Python3.6+
+
+torch 1.8.2+
+transformers 4.17.0
 tensorboardX
 tqdm
-timeit
 mmcv
 numpy
 pathlib
 PIL
 ```
 
-### 预训练模型
+### 已经训练好的模型
 
-[百度网盘: juyy](https://pan.baidu.com/s/1LCRpK_HCxWxqNkY6KsRdvw) 	 [Google Drive](https://drive.google.com/drive/folders/1YDEJ0hxlj3F887jaOQ2ymSc-HskSqOFQ?usp=sharing)
+| 训练数据集 | Bleu@4 | METEOR | ROUGE_L | CIDEr | 下载                                                         | 配置文件                                                     |
+| ---------- | ------ | ------ | ------- | ----- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| MSVD       | 64.8   | 43.3   | 81.3    | 137.4 | [百度网盘zmr4](https://pan.baidu.com/s/1tBw8dOjkdSfKcBhub4EDeA ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_msvd_config.json) |
+| MSR-VTT    | 50.4   | 32.1   | 66.2    | 62.8  | [百度网盘xy7e](https://pan.baidu.com/s/1ZC3QLbETBRmqKPtUgFQf2Q ) [Drive](https://drive.google.com/file/d/1-aA6Zc-cK38TjC0JPfbttE009Bh3BtG_/view?usp=sharing) | [config](./configs/caption-task_baseline_modal_clip4clip_config.json) |
 
-模型命名方式为`[数据集名字]-[一些训练配置]-[模型大小base]`，base模型大概400MB。
-
-| 模型名字                 | 模型描述              | METEOR指标 |
-| ------------------------ | --------------------- | ---------- |
-| M-CLIP-SCEloss-BERT-base | 使用SCEloss和BERT权重 | 28.7       |
-| M-CLIP-SCEloss-base      | 使用SCEloss           | **28.8**   |
-
-### 数据准备
-
-我们使用MSR-VTT数据集，由于版权原因不放出原视频，我们提供提取好的[CLIP特征 oyrt](https://pan.baidu.com/s/1mNFhymugYV58Z55F--e9cA)（这个博主总结的数据集中可以下载到[数据集](https://shiyaya.github.io/2019/02/22/video-caption-dataset/)）。
-
-提取CLIP特征请先按照[官方CLIP库](https://github.com/openai/CLIP)的说明配置好环境，并使用submodules中的video_features库提取特征，关于这个库的更多说明可以参考[Kamino666/video_features](https://github.com/Kamino666/video_features)。
-
-CLIP提取特征参数为：抽帧fps3，resize为224*224，使用CLIP的CLIP-ViT-B/32版本。
-
-## 训练 train
+### 先尝试个视频康康？
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python train.py
+git clone https://github.com/Kamino666/Video-Captioning-Transformer.git --recurse-submodules
+
+python predict.py -c <config> -m <model> -v <video> \
+--feat_type CLIP4CLIP-ViT-B-32 \
+--ext_type uni_12 \
+--greedy \
+[--gpu/--cpu]
 ```
 
-训练目前只支持单卡训练，训练配置存储在train.py的Opt类中。详情查看代码注释。
++ config：配置文件
++ model：模型
++ video：要测试的视频路径
++ gpu/cpu：使用gpu或者cpu推理
++ 更多参数见`predict.py`内的注释。
 
-> train_feat_dir = r"训练集的特征路径"
-> train_annotation_path = r"数据集标注文件"
-> val_feat_dir = r"验证集的特征路径"
-> val_annotation_path = r"数据集标注文件,同上"
->
-> 默认训练参数如下：
-> batch_size = 64 lr = 1e-4 enc_layer_num = 4ndec_layer_num = 4 head_num = 8 feat_size = 512 emb_dim = 768 hid_dim = 2048 dropout = 0.3 epoch_num = 30 use_bert = False
+### 一些B站视频的推理结果
 
-## 评估 validation
+![效果图](https://kamino-img.oss-cn-beijing.aliyuncs.com/20220310195345.png)
+
+| ![](https://kamino-img.oss-cn-beijing.aliyuncs.com/20220310195547.jpeg) | 效果有的好有的差吧hhhhh |
+| ------------------------------------------------------------ | ----------------------- |
+
+## 进阶:fire:
+
+### 数据集准备
+
+本repo使用MSR-VTT数据集和MSVD数据集
+
++ 原始视频
+
+  由于版权原因无法放出原视频（但可以在[这里](https://github.com/ArrowLuo/CLIP4Clip)和[这里](https://shiyaya.github.io/2019/02/22/video-caption-dataset/)找到下载的地方）。
+
++ 特征文件
+
+  [百度网盘 iopo](https://pan.baidu.com/s/1h0r0aOXFPUSImrjXvgNwFQ )包含了两个数据集的标注和特征
+
++ 特征提取方法
+
+  特征提取使用我的另一个repo：[Kamino666/video_features](https://github.com/Kamino666/video_features)。
+
+### 评估模型
+
+:warning:使用前请配置好Java
+
+```shell
+PATH=$PATH:<java_root> \
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+python eval.py -c <config> -m <model> [--gpu/--cpu]
+```
+
++ java_root是java的路径，精确到bin目录，假如已经配置好环境变量可以忽略此项。
+
+### 训练模型
 
 ```bash
-CUDA_VISIBLE_DEVICES=2 python eval_batch_video.py  # 需要java
+PATH=$PATH:<java_root> \
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+python -m torch.distributed.run --nproc_per_node 4 train.py \
+-c <config> --multi_gpu -ws 4
 ```
 
-评估时请先配置好java jre环境，使用[salaniz/pycocoevalcap](https://github.com/salaniz/pycocoevalcap)的代码，会给出METEOR、CIDEr、BLEU、ROUGH_L这几个指标。同样，评估配置存储在eval_batch_video.py的EvalOpt类中，需保证评估配置符合模型训练的配置。
++ 训练时可使用Bleu等指标作为Earlystop依据，此时需要Java。
++ 此处以4卡训练为例子，注意`-ws`参数的值是使用的显卡数量。
++ 若单卡训练则：`python train.py -c <config> --gpu`，若懒得改也可以直接把4换成1。
 
-## 单视频预测
+### 配置文件说明
 
-```bash
-python test_video.py \
-	-v 预测视频路径 \
-    -m ./checkpoint/模型名字 \
-    --feat CLIP \
-    --fps 2 \
-    --gpu
+配置文件是json格式的一个文件，在训练和预测时都需要用到。简单的说明如下：（部分配置可能不起作用或令人迷惑，是实验时添加的其他部分，可用性暂无法保证）
+
+```
+├── data
+│   ├── train  训练数据
+│   ├── validation  验证数据（用来计算loss）
+│   └── eval  验证数据（用来计算Bleu等）
+├── train  和训练方法有关的参数
+│   ├── earlystop  earlystop的patience
+│   ├── epoch      最大epoch数
+│   ├── save_dir   模型保存路径
+│   ├── log_dir    日志保存路径（tensorboard读取）
+│   └── tag        模型保存名称
+├── test
+└── model  和模型结构有关的参数
+    ├── video_encoder    Transformer编码器的参数
+    ├── caption_decoder  Transformer解码器的参数
+    └── modal_shape      模态的维度
 ```
 
- **目前只支持`--feat CLIP`的单视频预测**。除了上述参数，在test_video.py里还可以找到更多说明。
-
-## 效果展示
-
-MSR-VTT数据集内视频：
+### 数据集内视频结果
 
 | ![1](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016150236.png) | ![2](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016150241.png) |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | ![3](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016150245.png) | ![4](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016150246.png) |
 | ![6](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016150258.png) | ![7](https://kamino-img.oss-cn-beijing.aliyuncs.com/20211016150306.png) |
 
-Bilibili上随机搜索得到的视频：
-
-暂无，正在测试中。
-
 ## 常见问题
 
-Q：下载来自hugging face的模型失败
++ Q：下载来自hugging face的模型失败
++ A：以`bert-base-uncased`模型为例，在[hugging face的模型网站上的下载页面](https://huggingface.co/bert-base-uncased/tree/main)可以看到一系列文件，如果是模型下载失败`BertModel.from_pretrained()`，则下载`.bin`文件，并把参数改成`.bin`的路径；如果是tokenizer下载失败`AutoTokenizer.from_pretrained()`，则下载`config.json`、`tokenizer.json`、`tokenizer_config.json`、`vocab.txt`四个文件，并把参数改成这四个文件所处目录路径。**如果不想这么麻烦，可以科学上网。**
 
-A：以`bert-base-uncased`模型为例，在[hugging face的模型网站上的下载页面](https://huggingface.co/bert-base-uncased/tree/main)可以看到一系列文件，如果是模型下载失败`BertModel.from_pretrained()`，则下载`.bin`文件，并把参数改成`.bin`的路径；如果是tokenizer下载失败`AutoTokenizer.from_pretrained()`，则下载`config.json`、`tokenizer.json`、`tokenizer_config.json`、`vocab.txt`四个文件，并把参数改成这四个文件所处目录路径。**如果不想这么麻烦，可以科学上网。**
++ Q：这个模型多大？
++ A：主要参数是总共4层的Transformer。
 
+## TODO
 
++ 微信小程序正在开发中
++ 支持中文和VATEX数据集
++ 祈祷论文不要被拒:pray:
 
 ## 致谢
 
-[openai/CLIP: Contrastive Language-Image Pretraining (github.com)](https://github.com/openai/CLIP)
+[openai/CLIP](https://github.com/openai/CLIP)
 
-[v-iashin/video_features: Extract video features from raw videos using multiple GPUs. We support RAFT and PWC flow frames as well as I3D, R(2+1)D, VGGish, ResNet features. (github.com)](https://github.com/v-iashin/video_features)
+[v-iashin/video_features](https://github.com/v-iashin/video_features)
 
-[salaniz/pycocoevalcap: Python 3 support for the MS COCO caption evaluation tools (github.com)](https://github.com/salaniz/pycocoevalcap)
+[salaniz/pycocoevalcap](https://github.com/salaniz/pycocoevalcap)
+
+## 引用
+
+```latex
+@misc{video,
+  author =       {Zihao, Liu},
+  title =        {{video captioning transformer}},
+  howpublished = {\url{https://github.com/Kamino666/Video-Captioning-Transformer}},
+  year =         {2022}
+}
+```
 
 
 

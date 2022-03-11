@@ -1,37 +1,13 @@
 import torch
-import torch.nn.functional as F
 import numpy as np
-
-
-class SCELoss(torch.nn.Module):
-    def __init__(self, alpha, beta, ignore_index, num_classes=10):
-        super(SCELoss, self).__init__()
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.alpha = alpha
-        self.beta = beta
-        self.num_classes = num_classes
-        self.cross_entropy = torch.nn.CrossEntropyLoss(ignore_index=ignore_index)
-
-    def forward(self, pred, labels):
-        # CCE
-        ce = self.cross_entropy(pred, labels)
-
-        # RCE
-        pred = F.softmax(pred, dim=1)
-        pred = torch.clamp(pred, min=1e-7, max=1.0)
-        label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).float().to(self.device)
-        label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
-        # rce = (-1*torch.sum(pred * torch.log(label_one_hot), dim=1))
-        rce = -torch.sum(pred * torch.log(label_one_hot), dim=1)
-
-        # Loss
-        loss = self.alpha * ce + self.beta * rce.mean()
-        return loss
+import json
+import random
+import os
 
 
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
-    """This class is from https://github.com/Bjarten/early-stopping-pytorch/blob/master/pytorchtools.py"""
+    """This class is modified from https://github.com/Bjarten/early-stopping-pytorch/blob/master/pytorchtools.py"""
 
     def __init__(self, patience=7, verbose=False, delta=0, path='checkpoint.pt', trace_func=print):
         """
@@ -57,57 +33,31 @@ class EarlyStopping:
         self.path = path
         self.trace_func = trace_func
 
-    def __call__(self, val_loss, model):
+    def __call__(self, val_loss, model, do_save):
 
-        score = -val_loss
+        val_loss = -val_loss
 
         if self.best_score is None:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-        elif score < self.best_score + self.delta:
+            self.best_score = val_loss
+            self.save_checkpoint(val_loss, model, do_save)
+        elif val_loss < self.best_score + self.delta:
             self.counter += 1
             self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
+            self.best_score = val_loss
+            self.save_checkpoint(val_loss, model, do_save)
             self.counter = 0
 
-    def save_checkpoint(self, val_loss, model):
+    def save_checkpoint(self, val_loss, model, do_save):
         """Saves model when validation loss decrease."""
         if self.verbose:
             self.trace_func(
                 f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), self.path)
+        if do_save is True:
+            torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
-
-
-class Meter:
-    def __init__(self, mode="avg"):
-        assert mode in ["avg", "max"]
-        self.mode = mode
-        self.count = 0
-        self.sum = 0
-
-    def add(self, x):
-        if self.mode == "avg":
-            self.sum += x
-            self.count += 1
-        elif self.mode == "max":
-            self.sum = x if x > self.sum else self.sum
-
-    def get(self):
-        if self.mode == "avg":
-            return self.sum / self.count
-        elif self.mode == "max":
-            return self.sum
-
-    def pop(self):
-        rslt = self.get()
-        self.count = 0
-        self.sum = 0
-        return rslt
 
 
 def generate_square_subsequent_mask(sz):
@@ -127,4 +77,74 @@ def show_input_shape(**kwargs):
                 print(f"{k}:{v.shape}", end="  ")
             print("")
     print("***************************************\n")
+
+
+class Config:
+    def __init__(self, path: str):
+        """
+        Load json config file from disk.
+        :param path: The path of config file
+        """
+        with open(path) as f:
+            self.data = json.load(f)
+
+    def display(self, l: int = 90):
+        self.data: dict
+        bold_line = "=" * l
+        thin_list = "-" * l
+        print(bold_line)
+        print("{:^{}}".format("Config", l))
+        print(bold_line)
+        for mk, mv in self.data.items():
+            print("{:^{}}".format(f"{mk}", l))
+            print(thin_list)
+            if type(mv) != dict:
+                print(mv)
+            else:
+                for k, v in mv.items():
+                    print("{:<20}| {}".format(k, v))
+            print(bold_line)
+
+    def check(self):
+        model_cfg = self.data['model']
+        if model_cfg['video_encoder'].get('type', 'mme') == 'simple':
+            if self.data['train']['task'] != "caption":
+                raise ValueError("Simple video encoder does NOT support 'cross' task")
+
+
+def setup_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.enabled = False
+
+
+def configure_hardware(args):
+    import torch.distributed as dist
+    if args.cpu:
+        args.device = torch.device('cpu')
+        args.is_main_rank = True
+        print("\033[1;33;40m Using CPU as backend \033[0m")
+    elif args.gpu:
+        args.device = torch.device('cuda')
+        # args._multi_gpu = False
+        args.is_main_rank = True
+        print("\033[1;33;40m Using CUDA as backend \033[0m")
+    elif args.multi_gpu:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        args.local_rank = local_rank
+        args.is_main_rank = True if local_rank == 0 else False
+        # args.world_size = 4
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend='nccl')  # 一般使用的后端为nccl
+        args.device = torch.device("cuda", local_rank)
+        if args.is_main_rank:
+            print("\033[1;33;40m Using multiple CUDA as backend \033[0m")
+    else:
+        raise ValueError("No hardware configured")
+    return args
 
