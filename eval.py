@@ -147,7 +147,7 @@ def evaluate(cfg: dict, local_args):
     model = MMT4Caption(cfg['model'], device=local_args.device).to(local_args.device)
     model.mode("caption")
     load_state = model.load_state_dict(
-        torch.load(local_args.model, map_location=local_args.device), strict=False
+        torch.load(local_args.model, map_location=local_args.device, weights_only=True), strict=False
     )
     print(f"Load state: {load_state}")
     # build dataloader
